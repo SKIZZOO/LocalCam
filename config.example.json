@@ -1,0 +1,25 @@
+{
+  "web_host": "0.0.0.0",
+  "web_port": 8765,
+  "record_root": "G:/CAM720/recordings",
+  "snapshot_root": "G:/CAM720/snapshots",
+  "record_mode": "continuous",
+  "segment_minutes": 10,
+  "min_free_gb": 20,
+  "retention_days": 30,
+  "motion": {
+    "enabled": false,
+    "interval_seconds": 1.0,
+    "threshold": 12.0,
+    "min_changed_fraction": 0.02,
+    "cooldown_seconds": 15.0,
+    "prebuffer_seconds": 0,
+    "resolution": 320
+  },
+  "cameras": [
+    {"name":"Fata - obiectiv 1","url":"rtsp://CAMERA_IP:554/live/ch00_0","username":"admin","password":""},
+    {"name":"Fata - obiectiv 2","url":"rtsp://CAMERA_IP:554/live/ch01_0","username":"admin","password":""},
+    {"name":"Camera 2 - obiectiv 1","url":"rtsp://CAMERA_IP:554/live/ch00_0","username":"admin","password":""},
+    {"name":"Camera 2 - obiectiv 2","url":"rtsp://CAMERA_IP:554/live/ch01_0","username":"admin","password":""}
+  ]
+}
