@@ -36,7 +36,19 @@ class LocalCamHandler(BaseHTTPRequestHandler):
     server_app: LocalCamServer
 
     def log_message(self, fmt, *args):
-        self.server_app.log('WEB ' + fmt % args)
+        # Keep the console focused on meaningful activity. Successful page/API
+        # requests are routine and are intentionally not printed.
+        message = fmt % args
+        parts = message.split(' ')
+        status = None
+        if len(parts) >= 2:
+            try:
+                status = int(parts[-2])
+            except (TypeError, ValueError):
+                pass
+        if status is not None and status < 400:
+            return
+        self.server_app.log('WEB ' + message)
 
     def _origin_ok(self):
         origin = self.headers.get('Origin', '')
@@ -53,14 +65,19 @@ class LocalCamHandler(BaseHTTPRequestHandler):
 
     def _json(self, payload: Any, status=200, headers=None):
         raw = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Content-Length', str(len(raw)))
-        self.send_header('Cache-Control', 'no-store')
-        for key, value in (headers or {}).items():
-            self.send_header(key, value)
-        self.end_headers()
-        self.wfile.write(raw)
+        try:
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(raw)))
+            self.send_header('Cache-Control', 'no-store')
+            for key, value in (headers or {}).items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(raw)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            # Browsers can cancel requests while navigating, refreshing, or
+            # closing a tab. Do not turn a normal disconnect into a traceback.
+            return None
 
     def _error(self, status, message):
         return self._json({'error': message}, status)
@@ -306,15 +323,17 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                     return self._error(403, 'Admin role required')
                 return self._json(self.server_app.save_settings(self._body()))
             if path.startswith('/api/record/'):
-                sid = urllib.parse.unquote(path[len('/api/record/'):])
+                record_path = path[len('/api/record/'):].strip('/')
+                sid, action = record_path.rsplit('/', 1) if '/' in record_path else ('', '')
+                sid = urllib.parse.unquote(sid)
                 stream = self.server_app.streams.get(sid)
                 if not stream:
                     return self._error(404, 'Stream not found')
                 if not self.server_app.role(self, 'admin', 'operator'):
                     return self._error(403, 'Operator role required')
-                if path.endswith('/start'):
+                if action == 'start':
                     return self._json({'ok': stream.start_recording()})
-                if path.endswith('/stop'):
+                if action == 'stop':
                     stream.stop_recording()
                     return self._json({'ok': True})
             if path.startswith('/api/ptz/'):
