@@ -55,9 +55,22 @@ def lan_ip() -> str:
 
 
 class PreviewWorker:
-    def __init__(self, ffmpeg, url, username, password, width, fps, on_frame):
-        # Keep preview's FFmpeg RTSP invocation aligned with the recorder,
-        # which is now confirmed working with this camera URL.
+    QUALITY_PRESETS = {
+        'low': {'width': 640, 'fps': 10, 'quality': 7},
+        'medium': {'width': 1280, 'fps': 15, 'quality': 5},
+        'high': {'width': 1920, 'fps': 20, 'quality': 3},
+        'ultra': {'width': 2560, 'fps': 25, 'quality': 2},
+    }
+
+    def __init__(self, ffmpeg, url, username, password, width, fps, on_frame, quality='high'):
+        preset = self.QUALITY_PRESETS.get(str(quality).lower(), self.QUALITY_PRESETS['high'])
+        target_width = min(int(width), preset['width']) if width else preset['width']
+        target_fps = min(int(fps), preset['fps']) if fps else preset['fps']
+        # The mobile apps keep the camera's native RTSP stream intact and let
+        # the device decoder handle the high-quality picture. Browser playback
+        # cannot consume raw RTSP, so we decode once and expose a clean MJPEG
+        # preview at a controllable resolution/FPS instead of using an overly
+        # small fixed 1280x8 stream.
         self.cmd = [
             ffmpeg,
             '-hide_banner',
@@ -79,9 +92,9 @@ class PreviewWorker:
             with_credentials(url, username, password),
             '-an',
             '-vf',
-            f'scale={width}:-2,fps={fps}',
+            f'scale={target_width}:-2,fps={target_fps}:round=near',
             '-q:v',
-            '5',
+            str(preset['quality']),
             '-f',
             'mjpeg',
             'pipe:1',
@@ -198,6 +211,7 @@ class StreamState:
             int(self.cfg['web_live_width']),
             int(self.cfg['web_live_fps']),
             self._frame,
+            self.cfg.get('live_quality', 'high'),
         )
         self.preview.start()
         m = self.cfg.get('motion', {})
