@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+import shutil
+import subprocess
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Callable
+
+from .rtsp import with_credentials
+
+
+class Recorder:
+    """One FFmpeg process that records one RTSP stream into rotating MKV segments."""
+
+    def __init__(
+        self,
+        ffmpeg_path: str,
+        root: Path,
+        segment_minutes: int,
+        min_free_gb: int,
+        retention_days: int,
+        username: str,
+        password: str,
+        on_log: Callable[[str], None],
+    ) -> None:
+        self.ffmpeg_path = ffmpeg_path
+        self.root = root
+        self.segment_minutes = max(1, int(segment_minutes))
+        self.min_free_gb = max(1, int(min_free_gb))
+        self.retention_days = max(0, int(retention_days))
+        self.username = username
+        self.password = password
+        self.on_log = on_log
+        self.process: subprocess.Popen[str] | None = None
+        self.lock = threading.RLock()
+        self.camera_id = ''
+        self.camera_name = ''
+        self.url = ''
+        self.stop_requested = False
+
+    @property
+    def running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+    def start(self, camera_id: str, camera_name: str, url: str) -> bool:
+        with self.lock:
+            if self.running:
+                return True
+
+            self.cleanup()
+            self.root.mkdir(parents=True, exist_ok=True)
+            day_dir = self.root / self.safe_name(camera_name) / datetime.now().strftime('%Y-%m-%d')
+            day_dir.mkdir(parents=True, exist_ok=True)
+            pattern = str(day_dir / '%Y-%m-%d_%H-%M-%S.mkv')
+            target = with_credentials(url, self.username, self.password)
+
+            cmd = [
+                self.ffmpeg_path,
+                '-hide_banner',
+                '-loglevel',
+                'warning',
+                '-rtsp_transport',
+                'tcp',
+                '-rw_timeout',
+                '15000000',
+                '-i',
+                target,
+                '-map',
+                '0:v:0?',
+                '-map',
+                '0:a:0?',
+                '-c',
+                'copy',
+                '-f',
+                'segment',
+                '-segment_time',
+                str(self.segment_minutes * 60),
+                '-reset_timestamps',
+                '1',
+                '-strftime',
+                '1',
+                '-segment_format',
+                'matroska',
+                pattern,
+            ]
+
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                )
+            except OSError as exc:
+                self.on_log(f'{camera_name}: failed to start FFmpeg: {exc}')
+                return False
+
+            self.process = proc
+            self.camera_id = camera_id
+            self.camera_name = camera_name
+            self.url = url
+            self.stop_requested = False
+            threading.Thread(target=self._read_stderr, args=(proc,), name='localcam-recorder-log', daemon=True).start()
+            threading.Thread(target=self._watchdog, args=(proc,), name='localcam-recorder-watchdog', daemon=True).start()
+            self.on_log(f'{camera_name}: recording started')
+            return True
+
+    def stop(self) -> None:
+        with self.lock:
+            proc = self.process
+            self.process = None
+            self.stop_requested = True
+
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+    def _read_stderr(self, proc: subprocess.Popen[str]) -> None:
+        if not proc.stderr:
+            return
+        for line in proc.stderr:
+            line = line.strip()
+            if line:
+                self.on_log(f'{self.camera_name}: {line}')
+
+    def _watchdog(self, proc: subprocess.Popen[str]) -> None:
+        code = proc.wait()
+        with self.lock:
+            if self.process is proc:
+                self.process = None
+        if not self.stop_requested and code not in (0, 15, -15):
+            self.on_log(f'{self.camera_name}: FFmpeg exited with code {code}; the controller will reconnect.')
+
+    def cleanup(self) -> None:
+        if not self.root.exists():
+            return
+
+        cutoff = time.time() - self.retention_days * 86400 if self.retention_days else None
+        if cutoff:
+            for path in self.root.rglob('*.mkv'):
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        path.unlink()
+                except OSError:
+                    pass
+
+        try:
+            usage = shutil.disk_usage(self.root.anchor or self.root)
+        except OSError:
+            return
+
+        minimum = self.min_free_gb * 1024**3
+        while usage.free < minimum:
+            files = sorted(
+                (p for p in self.root.rglob('*.mkv') if p.is_file()),
+                key=lambda p: p.stat().st_mtime,
+            )
+            if not files:
+                break
+            try:
+                files[0].unlink()
+            except OSError:
+                break
+            usage = shutil.disk_usage(self.root.anchor or self.root)
+
+    @staticmethod
+    def safe_name(text: str) -> str:
+        return ''.join(ch if ch.isalnum() or ch in ' -_' else '_' for ch in text).strip() or 'camera'
