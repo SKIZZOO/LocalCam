@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import secrets
 import shutil
 import socket
@@ -524,8 +525,19 @@ class LocalCamServer:
         cfg['web_live_fps'] = max(1, min(15, int(cfg.get('web_live_fps', 8))))
         cfg['web_live_width'] = max(320, min(2560, int(cfg.get('web_live_width', 1280))))
         cfg['web_session_hours'] = max(1, min(168, int(cfg.get('web_session_hours', 12))))
-        cfg['record_root'] = str(cfg.get('record_root', str(self.base_dir / 'recordings'))).strip()
-        cfg['snapshot_root'] = str(cfg.get('snapshot_root', str(self.base_dir / 'snapshots'))).strip()
+        def normalize_storage_path(value, fallback):
+            raw = os.path.expandvars(os.path.expanduser(str(value or fallback).strip()))
+            path = Path(raw)
+            if not path.is_absolute():
+                path = self.base_dir / path
+            return str(path.resolve(strict=False))
+
+        cfg['record_root'] = normalize_storage_path(
+            cfg.get('record_root'), self.base_dir / 'recordings'
+        )
+        cfg['snapshot_root'] = normalize_storage_path(
+            cfg.get('snapshot_root'), self.base_dir / 'snapshots'
+        )
         cfg['record_mode'] = cfg.get('record_mode') if cfg.get('record_mode') in ('continuous', 'motion', 'manual') else 'continuous'
 
         old = cfg.get('cameras', [])
