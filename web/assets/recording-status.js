@@ -6,6 +6,8 @@
   const previous = new Map();
   let initialized = false;
   let timer = null;
+  let pollInFlight = false;
+  let mutationTimer = null;
 
   function reasonFor(mode) {
     if (mode === 'motion') return 'Motion detected';
@@ -17,7 +19,7 @@
     const map = new Map(streams.map((stream) => [String(stream.id), stream]));
     grid.querySelectorAll('.cam').forEach((card) => {
       const img = card.querySelector('.cam-body img');
-      const id = img?.src ? decodeURIComponent(new URL(img.src, location.href).pathname.split('/').pop()?.replace(/\.mjpg$/, '') || '') : '';
+      const id = img?.src ? decodeURIComponent(new URL(img.src, location.href).pathname.split('/').pop()?.replace(/\\.mjpg$/, '') || '') : '';
       const stream = map.get(id);
       if (!stream) return;
 
@@ -49,17 +51,28 @@
   }
 
   async function poll() {
+    if (pollInFlight || document.hidden) return;
+    pollInFlight = true;
     try {
       const [streams, info] = await Promise.all([
         fetch('/api/streams', { credentials: 'same-origin', cache: 'no-store' }).then((r) => r.ok ? r.json() : Promise.reject(new Error('streams'))),
         fetch('/api/info', { credentials: 'same-origin', cache: 'no-store' }).then((r) => r.ok ? r.json() : Promise.reject(new Error('info'))),
       ]);
       update(streams, info.record_mode || 'continuous');
-    } catch {}
+    } catch {} finally {
+      pollInFlight = false;
+    }
   }
 
-  new MutationObserver(() => { poll(); }).observe(grid, { childList: true, subtree: true });
+  new MutationObserver(() => {
+    clearTimeout(mutationTimer);
+    mutationTimer = setTimeout(poll, 300);
+  }).observe(grid, { childList: true, subtree: true });
+  document.addEventListener('visibilitychange', poll);
   poll();
-  timer = setInterval(poll, 2000);
-  window.addEventListener('beforeunload', () => clearInterval(timer));
+  timer = setInterval(poll, 10000);
+  window.addEventListener('beforeunload', () => {
+    clearInterval(timer);
+    clearTimeout(mutationTimer);
+  });
 })();
