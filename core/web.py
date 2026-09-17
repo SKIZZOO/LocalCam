@@ -10,7 +10,7 @@ import socket
 import subprocess
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
@@ -492,7 +492,7 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 dt = datetime.strptime(match.group(1), '%Y-%m-%d_%H-%M-%S')
             except ValueError:
                 continue
-            end = dt + __import__('datetime').timedelta(minutes=minutes)
+            end = dt + timedelta(minutes=minutes)
             segments.append({
                 'id': row['id'],
                 'camera': row['camera'],
@@ -518,7 +518,10 @@ class LocalCamHandler(BaseHTTPRequestHandler):
             '-i', str(target),
             '-map', '0:v:0?',
             '-map', '0:a:0?',
-            '-c:v', 'copy',
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-crf', '23',
+            '-pix_fmt', 'yuv420p',
             '-c:a', 'aac',
             '-b:a', '128k',
             '-avoid_negative_ts', 'make_zero',
