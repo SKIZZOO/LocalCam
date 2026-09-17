@@ -282,6 +282,7 @@ class StreamState:
             return True
         if time.time() < self.record_retry_at:
             return False
+        self.record_retry_at = time.time() + 15
         self.recorder = Recorder(
             self.cfg['ffmpeg_path'],
             Path(self.cfg['record_root']),
@@ -301,6 +302,7 @@ class StreamState:
         return ok
 
     def stop_recording(self):
+        self.record_retry_at = 0.0
         if self.recorder:
             self.recorder.stop()
 
