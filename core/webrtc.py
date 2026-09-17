@@ -315,6 +315,9 @@ class WebRTCManager:
     async def _offer(self, peer_id: str, stream, offer_type: str, offer_sdp: str, quality: str):
         from aiortc import RTCPeerConnection, RTCRtpSender, RTCSessionDescription
 
+        if peer_id in self._peers:
+            await self._close_peer(peer_id)
+
         pc = RTCPeerConnection()
         video = FFmpegVideoTrack(stream.camera, stream.cfg['ffmpeg_path'], quality)
         audio = None
