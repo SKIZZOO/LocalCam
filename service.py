@@ -8,7 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 def run_console() -> None:
-    from server import LocalCamServer
+    from core.nvr import LocalCamServer
     app = LocalCamServer(BASE_DIR)
     app.start()
     try:
@@ -46,7 +46,7 @@ if servicemanager is not None:
 
         def SvcDoRun(self):  # noqa: N802
             servicemanager.LogInfoMsg('LocalCam service starting')
-            from server import LocalCamServer
+            from core.nvr import LocalCamServer
             self.app = LocalCamServer(BASE_DIR)
             self.app.start()
             while True:
