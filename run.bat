@@ -1,97 +1,121 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
-title LocalCam | Startup
-color 0B
+title LocalCam Launcher
 
-:header
-cls
-echo.
-echo  +----------------------------------------------------------+
-echo  ^|                         LOCALCAM                         ^|
-echo  ^|                 Network Camera Recorder                  ^|
-echo  +----------------------------------------------------------+
-echo.
-echo  This launcher checks requirements and starts the app.
-echo.
+set "ROOT=%~dp0"
+set "PY="
 
-where py >nul 2>&1
-if errorlevel 1 goto :python_missing
-py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+where python >nul 2>&1
+if not errorlevel 1 set "PY=python"
+if not defined PY (
+  where py >nul 2>&1
+  if not errorlevel 1 set "PY=py -3"
+)
+if not defined PY goto :python_missing
+
+%PY% -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
 if errorlevel 1 goto :python_old
 
-if not exist app.py (
-  echo  [ERROR] app.py was not found.
-  echo          Make sure this file is inside the LocalCam folder.
-  goto :error_pause
-)
-if not exist requirements.txt (
-  echo  [ERROR] requirements.txt was not found. Project files may be incomplete.
-  goto :error_pause
-)
+if not exist "%ROOT%app.py" goto :project_missing
+if not exist "%ROOT%requirements.txt" goto :requirements_missing
 
-if not exist .venv\Scripts\python.exe (
-  echo  [SETUP] LocalCam has not been installed on this computer yet.
-  echo          Setup creates a local Python environment and installs packages.
-  echo          Packages are downloaded using pip from its configured index.
+if not exist "%ROOT%.venv\Scripts\python.exe" (
   echo.
-  choice /C YN /N /M "  Install requirements now? [Y/N] "
-  if errorlevel 2 goto :cancelled
+  echo ========================================
+  echo            LOCALCAM FIRST START
+  echo ========================================
   echo.
-  call install.bat
-  if errorlevel 1 goto :error_pause
+  echo Creating the LocalCam Python environment. This can take a few minutes.
+  echo.
+  %PY% -m venv "%ROOT%.venv"
+  if errorlevel 1 goto :setup_failed
+
+  "%ROOT%.venv\Scripts\python.exe" -m pip install --upgrade pip
+  if errorlevel 1 goto :setup_failed
+
+  "%ROOT%.venv\Scripts\python.exe" -m pip install -r "%ROOT%requirements.txt"
+  if errorlevel 1 goto :setup_failed
+
+  if not exist "%ROOT%config.json" (
+    if not exist "%ROOT%config.example.json" goto :config_missing
+    copy /y "%ROOT%config.example.json" "%ROOT%config.json" >nul
+    if errorlevel 1 goto :setup_failed
+  )
+  echo.
+  echo LocalCam setup completed.
 ) else (
-  echo  [OK] LocalCam Python environment found.
-)
-
-echo.
-where ffmpeg >nul 2>&1
-if errorlevel 1 (
-  echo  [NOTICE] FFmpeg was not found on PATH.
-  echo           It is required for camera streams and recording.
-  echo           Official information: https://ffmpeg.org/download.html
   echo.
-  choice /C YN /N /M "  Open the FFmpeg download page? [Y/N] "
-  if errorlevel 2 goto :start_app
-  start "" "https://ffmpeg.org/download.html"
+  echo LocalCam environment found.
 )
 
-:start_app
 echo.
-echo  [START] Launching LocalCam...
-echo          Keep this window open while using LocalCam.
+echo ========================================
+echo              STARTING LOCALCAM
+echo ========================================
 echo.
-.venv\Scripts\python.exe app.py
+echo The LocalCam web interface will open automatically.
+echo Keep this window open while LocalCam is running.
 echo.
-echo  [STOP] LocalCam has exited.
-goto :error_pause
+echo Server output:
+echo.
+"%ROOT%.venv\Scripts\python.exe" "%ROOT%app.py"
+set "APP_EXIT=%ERRORLEVEL%"
+echo.
+if not "%APP_EXIT%"=="0" (
+  echo LocalCam stopped with exit code %APP_EXIT%.
+  echo Review the messages above for the cause.
+  pause
+  exit /b %APP_EXIT%
+)
+
+echo LocalCam stopped.
+pause
+exit /b 0
 
 :python_missing
-echo  [MISSING] Python 3.11 or newer was not found.
-echo            Official download: https://www.python.org/downloads/windows/
 echo.
-choice /C YN /N /M "  Open the Python download page? [Y/N] "
-if errorlevel 2 goto :cancelled
-start "" "https://www.python.org/downloads/windows/"
-goto :cancelled
+echo ERROR: Python 3.11 or newer was not found.
+echo Install Python from:
+echo https://www.python.org/downloads/windows/
+echo.
+pause
+exit /b 1
 
 :python_old
-echo  [MISSING] Python 3.11 or newer is required.
-echo            Official download: https://www.python.org/downloads/windows/
 echo.
-choice /C YN /N /M "  Open the Python download page? [Y/N] "
-if errorlevel 2 goto :cancelled
-start "" "https://www.python.org/downloads/windows/"
-goto :cancelled
-
-:cancelled
-echo.
-echo  No changes were made by this launcher.
-pause
-goto :done
-
-:error_pause
+echo ERROR: Python 3.11 or newer is required.
+echo Install or update Python from:
+echo https://www.python.org/downloads/windows/
 echo.
 pause
-:done
+exit /b 1
+
+:project_missing
+echo.
+echo ERROR: app.py was not found.
+echo Run run.bat from the LocalCam project folder.
+pause
+exit /b 1
+
+:requirements_missing
+echo.
+echo ERROR: requirements.txt was not found.
+echo The LocalCam project files are incomplete.
+pause
+exit /b 1
+
+:config_missing
+echo.
+echo ERROR: config.example.json was not found, so LocalCam cannot create its configuration.
+pause
+exit /b 1
+
+:setup_failed
+echo.
+echo ERROR: LocalCam setup failed.
+echo Check the command output above, then run run.bat again.
+pause
+exit /b 1
+
 endlocal
