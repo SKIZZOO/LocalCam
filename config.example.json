@@ -1,10 +1,10 @@
 {
   "app_name": "LocalCam",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "ffmpeg_path": "ffmpeg",
   "record_root": "recordings",
   "snapshot_root": "snapshots",
-  "record_mode": "continuous",
+  "record_mode": "manual",
   "segment_minutes": 10,
   "min_free_gb": 20,
   "max_retention_days": 30,
