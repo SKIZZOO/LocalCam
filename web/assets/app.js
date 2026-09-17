@@ -371,8 +371,10 @@ async function loadSettings() {
   const settings = await api('/api/settings');
   state.settings = settings;
   $('sRecordRoot').value = settings.record_root ?? '';
+  syncPathDisplay('sRecordRoot', 'sRecordRootFull');
   $('sSnapshotRoot').value = settings.snapshot_root ?? '';
-  $('sRecordMode').value = settings.record_mode ?? 'continuous';
+  syncPathDisplay('sSnapshotRoot', 'sSnapshotRootFull');
+  $('sRecordMode').value = settings.record_mode ?? 'manual';
   $('sSegment').value = settings.segment_minutes ?? 10;
   $('sMinFree').value = settings.min_free_gb ?? 10;
   $('sRetention').value = settings.max_retention_days ?? 30;
@@ -570,6 +572,48 @@ function setupSecurityActions() {
   });
 }
 
+function syncPathDisplay(inputId, displayId) {
+  const input = $(inputId);
+  const display = $(displayId);
+  if (!input || !display) return;
+  const value = String(input.value || '');
+  display.textContent = value ? value : 'Not selected';
+  display.title = value;
+  input.title = value;
+}
+
+async function pickFolder(kind) {
+  const inputId = kind === 'snapshot' ? 'sSnapshotRoot' : 'sRecordRoot';
+  const displayId = kind === 'snapshot' ? 'sSnapshotRootFull' : 'sRecordRootFull';
+  const button = document.querySelector(`[data-pick-folder="${kind}"]`);
+  if (button) button.disabled = true;
+  try {
+    const current = $(inputId)?.value || '';
+    const data = await api(`/api/folder-picker?kind=${encodeURIComponent(kind)}&current=${encodeURIComponent(current)}`);
+    if (data.cancelled) return;
+    if (!data.path) throw new Error('No folder was selected.');
+    $(inputId).value = data.path;
+    syncPathDisplay(inputId, displayId);
+  } catch (error) {
+    showToast(error.message || 'Could not choose a folder.', 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function setupFolderPickers() {
+  document.querySelectorAll('[data-pick-folder]').forEach((button) => {
+    button.addEventListener('click', () => pickFolder(button.dataset.pickFolder));
+  });
+  ['sRecordRoot', 'sSnapshotRoot'].forEach((id) => {
+    $(id)?.addEventListener('input', () => {
+      syncPathDisplay(id, id === 'sRecordRoot' ? 'sRecordRootFull' : 'sSnapshotRootFull');
+    });
+  });
+  syncPathDisplay('sRecordRoot', 'sRecordRootFull');
+  syncPathDisplay('sSnapshotRoot', 'sSnapshotRootFull');
+}
+
 function setupSettingsActions() {
   $('saveSettings').addEventListener('click', async () => {
     const button = $('saveSettings');
@@ -628,6 +672,7 @@ async function init() {
   setupCameraSettings();
   setupSecurityActions();
   setupSettingsActions();
+  setupFolderPickers();
   setupBackupActions();
   setupTopActions();
   initDates();
