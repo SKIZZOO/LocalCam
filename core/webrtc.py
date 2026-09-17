@@ -29,104 +29,37 @@ QUALITY_PRESETS = {
 }
 
 
-class FFmpegVideoTrack(VideoStreamTrack):
-    """aiortc VideoStreamTrack backed by a low-latency FFmpeg MJPEG decode."""
+class SharedVideoTrack(VideoStreamTrack):
+    """WebRTC video track fed from LocalCam's existing RTSP preview worker."""
 
-    def __init__(self, camera: dict[str, Any], ffmpeg: str, quality: str = 'high'):
+    def __init__(self, stream, quality: str = 'high'):
         import av
-
         super().__init__()
         self._av = av
-        preset = QUALITY_PRESETS.get(str(quality).lower(), QUALITY_PRESETS['high'])
-        self.width = int(preset['width'])
-        self.fps = int(preset['fps'])
-        self.quality = int(preset.get('quality', 2))
-        self.camera = camera
-        self.ffmpeg = ffmpeg
-        self.process: subprocess.Popen[bytes] | None = None
-        self.stdout = None
-        self.decoder = av.CodecContext.create('mjpeg', 'r')
+        self.stream = stream
+        self.quality = str(quality or 'high').lower()
+        self.fps = int(QUALITY_PRESETS.get(self.quality, QUALITY_PRESETS['high'])['fps'])
+        self.last_seq = 0
         self.pts = 0
-        self.lock = threading.RLock()
-        self._start_process()
 
-    def _target(self) -> str:
-        return with_credentials(
-            str(self.camera.get('url', '')),
-            str(self.camera.get('username', '')),
-            str(self.camera.get('password', '')),
-        )
+        if self.quality != stream.preview_quality:
+            stream.set_preview_quality(self.quality)
 
-    def _start_process(self) -> None:
-        with self.lock:
-            if self.process and self.process.poll() is None:
-                return
-            cmd = [
-                self.ffmpeg,
-                '-hide_banner',
-                '-loglevel', 'error',
-                '-rtsp_transport', RTSP_AUTO_TRANSPORT,
-                '-user_agent', RTSP_USER_AGENT,
-                '-timeout', '15000000',
-                '-fflags', 'nobuffer',
-                '-flags', 'low_delay',
-                '-probesize', '3000000',
-                '-analyzeduration', '1000000',
-                '-i', self._target(),
-                '-map', '0:v:0',
-                '-an',
-                '-vf', f'scale={self.width}:-2:flags=lanczos,fps={self.fps}:round=near',
-                '-q:v', str(self.quality),
-                '-f', 'mjpeg',
-                'pipe:1',
-            ]
-            self.process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-                bufsize=0,
-            )
-            self.stdout = self.process.stdout
-            self.pts = 0
+    def _wait_for_frame(self):
+        with self.stream.lock:
+            self.stream.lock.wait_for(lambda: self.stream.seq != self.last_seq or self.stream.preview is None, 4)
+            frame = self.stream.frame
+            self.last_seq = self.stream.seq
+        if not frame:
+            raise EOFError('No live camera frame is available')
+        return frame
 
-    @staticmethod
-    def _read_jpeg(stream) -> bytes:
-        data = bytearray()
-        while True:
-            chunk = stream.read(8192)
-            if not chunk:
-                raise EOFError('RTSP video stream ended')
-            data.extend(chunk)
-            if len(data) >= 2 and data[-2:] == b'\xff\xd8':
-                # SOI cannot occur at the end of the initial chunk in a normal
-                # MJPEG frame, so keep reading. This branch is retained for
-                # malformed/truncated packet boundaries.
-                pass
-            start = data.find(b'\xff\xd8')
-            if start >= 0:
-                data = data[start:]
-                break
-            if len(data) > 8_000_000:
-                raise RuntimeError('Live JPEG frame is unexpectedly large')
-        while True:
-            chunk = stream.read(8192)
-            if not chunk:
-                raise EOFError('RTSP video stream ended')
-            data.extend(chunk)
-            end = data.find(b'\xff\xd9')
-            if end >= 0:
-                return bytes(data[:end + 2])
-            if len(data) > 8_000_000:
-                raise RuntimeError('Live JPEG frame is unexpectedly large')
-
-    def _read_frame(self):
-        jpeg = self._read_jpeg(self.stdout)
-        frames = self.decoder.decode(self._av.Packet(jpeg))
-        if not frames:
-            raise RuntimeError('FFmpeg returned an undecodable JPEG frame')
-        frame = frames[-1].reformat(format='yuv420p')
+    def _decode(self):
+        jpeg = self._wait_for_frame()
+        packets = self._av.CodecContext.create('mjpeg', 'r').decode(self._av.Packet(jpeg))
+        if not packets:
+            raise RuntimeError('Live JPEG frame could not be decoded')
+        frame = packets[-1].reformat(format='yuv420p')
         frame.pts = self.pts
         frame.time_base = Fraction(1, 90000)
         self.pts += max(1, round(90000 / self.fps))
@@ -134,37 +67,18 @@ class FFmpegVideoTrack(VideoStreamTrack):
 
     async def recv(self):
         try:
-            return await asyncio.to_thread(self._read_frame)
-        except Exception:
-            self.close()
-            self._start_process()
-            return await asyncio.to_thread(self._read_frame)
-
-    def close(self) -> None:
-        with self.lock:
-            proc = self.process
-            self.process = None
-            self.stdout = None
-        if proc:
-            try:
-                proc.terminate()
-            except OSError:
-                pass
-            try:
-                proc.wait(timeout=2)
-            except Exception:
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+            return await asyncio.to_thread(self._decode)
+        except Exception as exc:
+            raise RuntimeError(f'Live WebRTC video failed: {exc}') from exc
 
     def stop(self) -> None:
-        self.close()
         super().stop()
 
 
+
+
 class FFmpegAudioTrack(AudioStreamTrack):
-    """aiortc AudioStreamTrack backed by decoded 48 kHz mono PCM."""
+    """Optional WebRTC audio track backed by the camera RTSP audio."""
 
     SAMPLES = 960
     BYTES = SAMPLES * 2
@@ -196,7 +110,6 @@ class FFmpegAudioTrack(AudioStreamTrack):
                 '-loglevel', 'error',
                 '-rtsp_transport', RTSP_AUTO_TRANSPORT,
                 '-user_agent', RTSP_USER_AGENT,
-                '-allowed_media_types', 'audio',
                 '-fflags', 'nobuffer',
                 '-flags', 'low_delay',
                 '-probesize', '3000000',
@@ -204,7 +117,7 @@ class FFmpegAudioTrack(AudioStreamTrack):
                 '-timeout', '15000000',
                 '-i', self._target(),
                 '-vn',
-                '-map', '0:a:0',
+                '-map', '0:a:0?',
                 '-ar', '48000',
                 '-ac', '1',
                 '-f', 's16le',
@@ -223,7 +136,6 @@ class FFmpegAudioTrack(AudioStreamTrack):
 
     def _read_frame(self):
         from av import AudioFrame
-
         data = bytearray()
         while len(data) < self.BYTES:
             chunk = self.stdout.read(self.BYTES - len(data)) if self.stdout else b''
@@ -239,15 +151,7 @@ class FFmpegAudioTrack(AudioStreamTrack):
         return frame
 
     async def recv(self):
-        try:
-            return await asyncio.to_thread(self._read_frame)
-        except Exception:
-            self.close()
-            self._start_process()
-            try:
-                return await asyncio.to_thread(self._read_frame)
-            except Exception as exc:
-                raise RuntimeError(f'Live WebRTC audio failed: {exc}') from exc
+        return await asyncio.to_thread(self._read_frame)
 
     def close(self) -> None:
         with self.lock:
@@ -312,7 +216,7 @@ class WebRTCManager:
             await self._close_peer(peer_id)
 
         pc = RTCPeerConnection()
-        video = FFmpegVideoTrack(stream.camera, stream.cfg['ffmpeg_path'], quality)
+        video = SharedVideoTrack(stream, quality)
         audio = None
         video_transceiver = pc.addTransceiver('video', direction='sendonly')
         video_codecs = [
@@ -322,18 +226,9 @@ class WebRTCManager:
         if video_codecs:
             video_transceiver.setCodecPreferences(video_codecs)
         video_transceiver.sender.replaceTrack(video)
-        try:
-            audio = FFmpegAudioTrack(stream.camera, stream.cfg['ffmpeg_path'])
-            audio_transceiver = pc.addTransceiver('audio', direction='sendonly')
-            audio_codecs = [
-                codec for codec in RTCRtpSender.getCapabilities('audio').codecs
-                if codec.mimeType.lower() == 'audio/opus'
-            ]
-            if audio_codecs:
-                audio_transceiver.setCodecPreferences(audio_codecs)
-            audio_transceiver.sender.replaceTrack(audio)
-        except Exception as exc:
-            self.logger(f'{stream.name}: WebRTC audio unavailable: {exc}')
+        # Camera audio remains on LocalCam's dedicated Ogg/Opus element. Keeping
+        # WebRTC focused on video avoids opening a second RTSP audio session on
+        # cameras that expose audio only through their combined stream.
 
         self._peers[peer_id] = (pc, video, audio)
 
