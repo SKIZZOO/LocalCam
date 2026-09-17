@@ -35,6 +35,7 @@ A local-first network video recorder with a modern browser dashboard, recording 
 - Motion events stored in SQLite, with optional event snapshots
 - Browser notifications for new motion events
 - RTSP health probes
+- LAN camera discovery for common RTSP ports
 - Optional ONVIF PTZ control, when supported by the camera
 - Local multi-user authentication with Viewer, Operator, and Administrator roles
 - PBKDF2-SHA256 password hashing, HttpOnly sessions, login rate limiting, and same-origin checks for mutating requests
@@ -60,15 +61,17 @@ FFmpeg: <https://ffmpeg.org/download.html>
 ### 2. Set up and launch
 
 1. Download or clone this repository and open the `LocalCam` folder.
-2. Double-click **`run.bat`**. It checks for Python and the project files, and offers to run setup if the local environment is missing.
-3. If setup is needed, approve the prompt. `install.bat` creates `.venv` and installs the packages listed in `requirements.txt`.
-4. If FFmpeg is missing, follow the official download page or configure its executable path in Settings.
-5. When LocalCam starts, open the URL shown in the console.
-6. Create the administrator account on first launch.
-7. Go to **Settings → Cameras** and enter each camera's RTSP URL and credentials.
-8. Go to **Settings → Storage** to choose recording and snapshot folders.
+2. Double-click **`run.bat`**.
+3. If the LocalCam Python environment is missing, `run.bat` asks whether you want to install it.
+4. If the environment exists but runtime Python packages are missing, `run.bat` asks whether you want to repair them.
+5. LocalCam creates `config.json` automatically when needed.
+6. If FFmpeg is missing, install it and add it to `PATH`, or configure its executable path in Settings.
+7. LocalCam opens the browser automatically when startup completes.
+8. Create the administrator account on first launch.
+9. Go to **Settings → Cameras**. You can scan the LAN for common RTSP ports and then complete the camera's RTSP path and credentials.
+10. Go to **Settings → Storage** to choose recording and snapshot folders.
 
-You can also run `install.bat` first and then launch `run.bat`.
+The normal user workflow is now a single launcher: **`run.bat`**.
 
 ## Confirmed RTSP pattern
 
@@ -81,13 +84,16 @@ rtsp://CAMERA_IP:554/live/ch01_0
 
 Replace the example address and credentials with your own values locally. The repository intentionally contains placeholders only; actual camera paths can vary by model and firmware.
 
+## Camera discovery
+
+Open **Settings → Cameras** and use **Find cameras on your network**. LocalCam scans a bounded private IPv4 subnet for the common RTSP ports `554`, `8554`, and `10554`. An open port is only a candidate: the correct RTSP path, username, and password still depend on the camera model and firmware.
+
 ## Optional capabilities
 
-The installer includes optional packages for additional features:
-
-- `pywin32` — Windows Service support
 - `onvif-zeep` — ONVIF PTZ support
 - `psutil` — CPU and RAM monitoring
+- `pywin32` — Windows Service support (installed by the service installer when needed)
+- `PyInstaller` and `pytest` are development/build dependencies rather than normal runtime requirements.
 
 PTZ requires a compatible ONVIF service exposed by the camera. If it is unavailable, other LocalCam features can still be used.
 
@@ -95,7 +101,7 @@ PTZ requires a compatible ONVIF service exposed by the camera. If it is unavaila
 
 For an NVR-style installation that starts before a user signs in:
 
-1. Run `install.bat`.
+1. Run **`run.bat`** once so the LocalCam environment and runtime packages are installed.
 2. Run **`install_service.bat` as Administrator**.
 3. The service is configured for automatic startup and Windows service recovery.
 4. Use `start_service.bat` and `stop_service.bat` for manual control.
@@ -134,9 +140,10 @@ RTSP cameras
 
 LocalCam server
    ├── Authentication and roles
+   ├── LAN camera discovery and RTSP health checks
    ├── Settings, backup, and restore
    ├── Archive, timeline, and playback
-   └── Health checks and system metrics
+   └── System metrics
 ```
 
 ## Security
@@ -149,10 +156,11 @@ LocalCam server
 ## Troubleshooting
 
 - **Python not found:** Install Python 3.11+ from the official link above, then reopen `run.bat`.
-- **Setup fails:** Read the error in the console, confirm internet access for package downloads, and rerun `install.bat`.
+- **Run launcher reports missing packages:** choose **Y** to let `run.bat` install or repair the runtime dependencies.
 - **FFmpeg not found:** Install FFmpeg and add it to `PATH`, or set its executable path in LocalCam Settings.
-- **Camera will not connect:** Verify the camera IP, RTSP path, credentials, network reachability, and that RTSP is enabled on the camera.
+- **Camera will not connect:** Verify the camera IP, RTSP path, credentials, network reachability, and that RTSP is enabled on the camera. Port discovery can only identify open candidate ports.
 - **No recording space:** Check the configured storage folder, free disk space, and retention settings.
+- **Browser shows an old layout:** stop the old LocalCam process, start the current `run.bat`, then refresh the browser with `Ctrl+F5`.
 
 ## License
 
