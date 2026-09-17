@@ -181,41 +181,17 @@ def test_rtsp(
     }
 
 
-def discover_and_test_rtsp(
+def _probe_candidates(
     ffmpeg_path: str,
-    url: str,
+    candidates: list[tuple[str, str]],
     username: str,
     password: str,
-    timeout_seconds: int = 2,
-) -> dict[str, Any]:
-    """Find and validate a usable RTSP URL using fast known paths, then ONVIF."""
-    original = url.strip()
-    try:
-        parsed = urlsplit(original)
-        host = parsed.hostname or ''
-    except ValueError:
-        return {'ok': False, 'error': 'Invalid RTSP URL.'}
-
-    if not host:
-        return {'ok': False, 'error': 'Camera host/IP is required.'}
-
-    candidates: list[tuple[str, str]] = []
-
-    # Important: do not wait for ONVIF before trying the known media paths.
-    # ONVIF SOAP/WSDL discovery can be slow or unavailable even when RTSP works.
-    if _looks_like_root_path(original):
-        base = _candidate_base(original)
-        if base:
-            candidates.extend((base + path, 'common path') for path in COMMON_RTSP_PATHS)
-
-        # ONVIF is only a fallback after the fast RTSP path probes.
-        candidates.extend((uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password))
-    else:
-        candidates.append((original, 'configured URL'))
-
-    seen: set[str] = set()
-    failures: list[str] = []
-    checked = 0
+    timeout_seconds: int,
+    seen: set[str],
+    failures: list[str],
+    checked: int,
+) -> tuple[dict[str, Any] | None, int]:
+    """Probe candidates in order and return on the first working stream."""
     for candidate, method in candidates:
         if candidate in seen:
             continue
@@ -230,10 +206,63 @@ def discover_and_test_rtsp(
                 'transport': result.get('transport', ''),
                 'method': method,
                 'candidates_checked': checked,
-            }
+            }, checked
         error = str(result.get('error', '')).splitlines()[-1:]
         if error:
             failures.append(f'{redact_rtsp_url(candidate)}: {error[0]}')
+    return None, checked
+
+
+def discover_and_test_rtsp(
+    ffmpeg_path: str,
+    url: str,
+    username: str,
+    password: str,
+    timeout_seconds: int = 2,
+) -> dict[str, Any]:
+    """Find and validate a usable RTSP URL, prioritizing fast known paths."""
+    original = url.strip()
+    try:
+        parsed = urlsplit(original)
+        host = parsed.hostname or ''
+    except ValueError:
+        return {'ok': False, 'error': 'Invalid RTSP URL.'}
+
+    if not host:
+        return {'ok': False, 'error': 'Camera host/IP is required.'}
+
+    seen: set[str] = set()
+    failures: list[str] = []
+    checked = 0
+
+    # Probe common RTSP media paths FIRST. This avoids waiting for ONVIF SOAP/WSDL
+    # discovery and makes the known /live/ch00_0 URL return almost immediately.
+    if _looks_like_root_path(original):
+        base = _candidate_base(original)
+        if base:
+            common_candidates = [(base + path, 'common path') for path in COMMON_RTSP_PATHS]
+            result, checked = _probe_candidates(
+                ffmpeg_path, common_candidates, username, password,
+                timeout_seconds, seen, failures, checked,
+            )
+            if result:
+                return result
+
+        # ONVIF is a slow fallback only after the normal RTSP paths fail.
+        onvif_candidates = [(uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password)]
+        result, checked = _probe_candidates(
+            ffmpeg_path, onvif_candidates, username, password,
+            timeout_seconds, seen, failures, checked,
+        )
+        if result:
+            return result
+    else:
+        result, checked = _probe_candidates(
+            ffmpeg_path, [(original, 'configured URL')], username, password,
+            timeout_seconds, seen, failures, checked,
+        )
+        if result:
+            return result
 
     return {
         'ok': False,
