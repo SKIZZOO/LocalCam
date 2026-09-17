@@ -399,6 +399,32 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
                 return self._json(self.server_app.save_settings(self._body()))
+            if path.startswith('/api/webrtc/offer/'):
+                if not self.server_app.webrtc.available:
+                    return self._error(503, self.server_app.webrtc.error or 'WebRTC is unavailable. Install the LocalCam WebRTC dependencies.')
+                sid = urllib.parse.unquote(path[len('/api/webrtc/offer/'):])
+                stream = self.server_app.streams.get(sid)
+                if not stream:
+                    return self._error(404, 'Camera not found')
+                x = self._body(2_000_000)
+                offer_type = str(x.get('type', 'offer')).strip() or 'offer'
+                offer_sdp = str(x.get('sdp', ''))
+                peer_id = str(x.get('peer_id', '')).strip()
+                quality = str(x.get('quality', 'high')).lower()
+                if not offer_sdp:
+                    return self._error(400, 'WebRTC SDP offer is required.')
+                if not peer_id or len(peer_id) > 128:
+                    return self._error(400, 'Invalid WebRTC peer id.')
+                if quality not in ('low', 'medium', 'high', 'ultra'):
+                    quality = 'high'
+                try:
+                    result = self.server_app.webrtc.offer(
+                        peer_id, stream, offer_type, offer_sdp, quality
+                    )
+                    return self._json(result)
+                except Exception as exc:
+                    self.server_app.log(f'{stream.name}: WebRTC offer failed: {exc}')
+                    return self._error(502, f'WebRTC connection failed: {exc}')
             if path == '/api/clip':
                 if not self.server_app.role(self, 'admin', 'operator'):
                     return self._error(403, 'Operator role required')
