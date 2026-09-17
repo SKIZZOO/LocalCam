@@ -34,7 +34,11 @@ function newPeerId() {
 }
 
 async function connectWebRTC(stream, video, fallback, quality, generation) {
-  if (!window.RTCPeerConnection || generation !== webrtcGeneration) return false;
+  if (!window.RTCPeerConnection || generation !== webrtcGeneration) {
+    video.style.display = 'none';
+    fallback.style.display = '';
+    return false;
+  }
   const peerId = newPeerId();
   const pc = new RTCPeerConnection({ iceServers: [] });
   webrtcPeers.set(peerId, pc);
