@@ -26,7 +26,40 @@ WEB_DIR = Path(__file__).resolve().parent.parent / 'web'
 
 
 _NEW_RECORDING_RE = re.compile(
-    r'(?P<stamp>\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})-(?P<camera>.+)-(?P<reason>CONTINUOUS|MOTION|MANUAL)\.mkv(root: Path, rel: str) -> Path | None:
+    r'(?P<stamp>\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})-(?P<camera>.+)-(?P<reason>CONTINUOUS|MOTION|MANUAL)\.mkv$',
+    re.IGNORECASE,
+)
+_OLD_RECORDING_RE = re.compile(
+    r'(?P<camera>.+)_(?P<stamp>\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})_(?P<reason>Continuous|Motion|Manual)\.mkv$',
+    re.IGNORECASE,
+)
+
+
+def recording_meta(name: str, fallback_time: datetime | None = None) -> dict[str, Any]:
+    match = _NEW_RECORDING_RE.match(name)
+    new_format = bool(match)
+    if not match:
+        match = _OLD_RECORDING_RE.match(name)
+    if match:
+        stamp = match.group('stamp')
+        fmt = '%Y-%m-%d-%H-%M-%S' if new_format else '%Y-%m-%d_%H-%M-%S'
+        try:
+            start = datetime.strptime(stamp, fmt)
+        except ValueError:
+            start = fallback_time or datetime.fromtimestamp(0)
+        reason = match.group('reason').upper()
+        camera = match.group('camera')
+        if new_format:
+            camera = camera.replace('-', ' ')
+        return {'start': start, 'camera': camera, 'reason': reason}
+    return {
+        'start': fallback_time or datetime.fromtimestamp(0),
+        'camera': '',
+        'reason': 'UNKNOWN',
+    }
+
+
+def safe_join(root: Path, rel: str) -> Path | None:
     try:
         base = root.resolve()
         target = (base / urllib.parse.unquote(rel.lstrip('/'))).resolve()
