@@ -1,4 +1,9 @@
 const state = { info: null, settings: null, streams: [], auth: null };
+window.localcamCanControl = () => {
+  const role = state.auth?.user?.role;
+  return role === 'admin' || role === 'operator';
+};
+
 const $ = (id) => document.getElementById(id);
 
 const esc = (value) => String(value ?? '').replace(/[&<>\"]/g, (char) => ({
