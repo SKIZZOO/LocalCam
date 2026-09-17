@@ -11,6 +11,10 @@ from urllib.parse import quote, urlsplit, urlunsplit
 RTSP_AUTO_TRANSPORT = 'tcp'
 RTSP_TRANSPORTS = ('tcp', 'udp')
 
+# Some inexpensive camera RTSP servers behave differently depending on the
+# client User-Agent. VLC/LIVE555 is known to work with several such cameras.
+RTSP_USER_AGENT = 'LibVLC/3.0.21 (LIVE555 Streaming Media)'
+
 # Common paths used when ONVIF cannot provide a URI. /live/ch00_0 is a common
 # main-stream path on several low-cost camera families, so it is tested first.
 COMMON_RTSP_PATHS = (
@@ -122,17 +126,36 @@ def _onvif_stream_uris(host: str, username: str, password: str, ports=(80, 8080,
     return found
 
 
-def _run_probe(ffmpeg_path: str, target: str, transport: str, timeout_seconds: int) -> tuple[bool, str]:
+def _run_probe(ffmpeg_path: str, target: str, transport: str, timeout_seconds: int,
+               user_agent: str | None = RTSP_USER_AGENT) -> tuple[bool, str]:
     cmd = [
-        ffmpeg_path, '-hide_banner', '-loglevel', 'error',
-        '-rtsp_transport', transport,
-        '-rw_timeout', str(timeout_seconds * 1_000_000),
-        '-i', target, '-t', '1', '-f', 'null', '-',
+        ffmpeg_path,
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-rtsp_transport',
+        transport,
+        '-allowed_media_types',
+        'video',
+        '-rw_timeout',
+        str(timeout_seconds * 1_000_000),
+        '-probesize',
+        '5000000',
+        '-analyzeduration',
+        '2000000',
     ]
+    if user_agent:
+        cmd.extend(['-user_agent', user_agent])
+    cmd.extend(['-i', target, '-t', '1', '-f', 'null', '-'])
     try:
         proc = subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            timeout=timeout_seconds + 3, text=True, encoding='utf-8', errors='replace',
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds + 3,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
         )
     except FileNotFoundError:
         return False, 'FFmpeg executable not found'
@@ -143,16 +166,32 @@ def _run_probe(ffmpeg_path: str, target: str, transport: str, timeout_seconds: i
     return False, proc.stderr.strip() or f'RTSP probe failed using {transport.upper()}'
 
 
-def test_rtsp(ffmpeg_path: str, url: str, username: str, password: str, timeout_seconds: int = 6) -> dict[str, Any]:
+def test_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
+              timeout_seconds: int = 6) -> dict[str, Any]:
     target = with_credentials(url, username, password)
     errors: list[str] = []
     for transport in RTSP_TRANSPORTS:
-        ok, error = _run_probe(ffmpeg_path, target, transport, timeout_seconds)
-        if ok:
-            return {'ok': True, 'error': '', 'transport': transport, 'url': redact_rtsp_url(target)}
-        if error:
-            errors.append(f'{transport.upper()}: {error}')
-    return {'ok': False, 'error': '\n'.join(errors), 'transport': 'TCP, then UDP', 'url': redact_rtsp_url(target)}
+        # First mimic VLC/LIVE555 because VLC is known to open this camera's
+        # stream. Then fall back to FFmpeg's native Lavf User-Agent.
+        for user_agent in (RTSP_USER_AGENT, None):
+            ok, error = _run_probe(ffmpeg_path, target, transport, timeout_seconds, user_agent)
+            if ok:
+                return {
+                    'ok': True,
+                    'error': '',
+                    'transport': transport,
+                    'user_agent': user_agent or 'Lavf/default',
+                    'url': redact_rtsp_url(target),
+                }
+            if error:
+                label = 'VLC' if user_agent else 'Lavf'
+                errors.append(f'{transport.upper()} ({label}): {error}')
+    return {
+        'ok': False,
+        'error': '\n'.join(errors),
+        'transport': 'TCP, then UDP',
+        'url': redact_rtsp_url(target),
+    }
 
 
 def _failure_for(candidate: str, result: dict[str, Any]) -> str | None:
@@ -162,16 +201,8 @@ def _failure_for(candidate: str, result: dict[str, Any]) -> str | None:
     return f'{redact_rtsp_url(candidate)}: {error[-1]}'
 
 
-def _probe_batch(
-    ffmpeg_path: str,
-    candidates: list[tuple[str, str]],
-    username: str,
-    password: str,
-    timeout_seconds: int,
-    seen: set[str],
-    failures: list[str],
-    checked: int,
-) -> tuple[dict[str, Any] | None, int]:
+def _probe_batch(ffmpeg_path: str, candidates: list[tuple[str, str]], username: str, password: str,
+                 timeout_seconds: int, seen: set[str], failures: list[str], checked: int) -> tuple[dict[str, Any] | None, int]:
     pending = [(candidate, method) for candidate, method in candidates if candidate not in seen]
     if not pending:
         return None, checked
@@ -198,6 +229,7 @@ def _probe_batch(
                     'url': redact_rtsp_url(candidate),
                     'suggested_url': candidate,
                     'transport': result.get('transport', ''),
+                    'user_agent': result.get('user_agent', ''),
                     'method': method,
                     'candidates_checked': checked,
                 }, checked
@@ -209,7 +241,8 @@ def _probe_batch(
     return None, checked
 
 
-def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: str, timeout_seconds: int = 2) -> dict[str, Any]:
+def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
+                           timeout_seconds: int = 2) -> dict[str, Any]:
     original = url.strip()
     try:
         parsed = urlsplit(original)
@@ -223,24 +256,35 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
     failures: list[str] = []
     checked = 0
 
-    # Always test an explicitly configured media URL first.
+    # Always test an explicitly configured media URL first. This is important
+    # when a user has already verified the exact URL in VLC.
     if not _looks_like_root_path(original):
         result, checked = _probe_batch(
-            ffmpeg_path, [(original, 'configured URL')], username, password,
-            timeout_seconds, seen, failures, checked,
+            ffmpeg_path,
+            [(original, 'configured URL')],
+            username,
+            password,
+            timeout_seconds,
+            seen,
+            failures,
+            checked,
         )
         if result:
             return result
 
     base = _candidate_base(original)
     if base:
-        # The first batch contains the most likely low-cost camera paths. This
-        # keeps auto-detection fast and avoids waiting through a long serial list.
         common = [(base + path, 'common path') for path in COMMON_RTSP_PATHS]
         for start in range(0, len(common), 4):
             result, checked = _probe_batch(
-                ffmpeg_path, common[start:start + 4], username, password,
-                timeout_seconds, seen, failures, checked,
+                ffmpeg_path,
+                common[start:start + 4],
+                username,
+                password,
+                timeout_seconds,
+                seen,
+                failures,
+                checked,
             )
             if result:
                 return result
@@ -249,8 +293,14 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
     onvif = [(uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password)]
     for start in range(0, len(onvif), 4):
         result, checked = _probe_batch(
-            ffmpeg_path, onvif[start:start + 4], username, password,
-            timeout_seconds, seen, failures, checked,
+            ffmpeg_path,
+            onvif[start:start + 4],
+            username,
+            password,
+            timeout_seconds,
+            seen,
+            failures,
+            checked,
         )
         if result:
             return result
