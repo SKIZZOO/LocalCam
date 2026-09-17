@@ -1,7 +1,8 @@
 @echo off
-cd /d "%~dp0"
+setlocal
+cd /d %~dp0
 if not exist .venv\Scripts\python.exe (
-  echo Ruleaza install.bat mai intai.
+  echo Run install.bat first.
   pause
   exit /b 1
 )
