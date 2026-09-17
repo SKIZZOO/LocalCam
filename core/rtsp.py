@@ -5,16 +5,18 @@ from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 
-# FFmpeg accepts one rtsp_transport value per invocation. Consumer cameras vary,
-# so LocalCam probes UDP first and TCP second instead of passing an invalid list.
-RTSP_AUTO_TRANSPORT = 'udp'
-RTSP_TRANSPORTS = ('udp', 'tcp')
+# TCP is preferred for compatibility with cameras that reject UDP with RTSP 461.
+# Discovery still falls back to UDP when TCP does not work.
+RTSP_AUTO_TRANSPORT = 'tcp'
+RTSP_TRANSPORTS = ('tcp', 'udp')
 
 # Common paths used when ONVIF cannot provide a URI. /live/ch00_0 is a common
 # main-stream path on several low-cost camera families, so it is tested first.
 COMMON_RTSP_PATHS = (
     '/live/ch00_0',
     '/live/ch00_1',
+    '/live/ch01_0',
+    '/live/ch01_1',
     '/onvif1',
     '/h264_stream',
     '/h264',
@@ -145,7 +147,7 @@ def test_rtsp(ffmpeg_path: str, url: str, username: str, password: str, timeout_
             return {'ok': True, 'error': '', 'transport': transport, 'url': redact_rtsp_url(target)}
         if error:
             errors.append(f'{transport.upper()}: {error}')
-    return {'ok': False, 'error': '\n'.join(errors), 'transport': 'UDP, then TCP', 'url': redact_rtsp_url(target)}
+    return {'ok': False, 'error': '\n'.join(errors), 'transport': 'TCP, then UDP', 'url': redact_rtsp_url(target)}
 
 
 def _probe_candidates(ffmpeg_path: str, candidates: list[tuple[str, str]], username: str, password: str,
