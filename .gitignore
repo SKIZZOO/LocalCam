@@ -1,0 +1,9 @@
+config.json
+*.sqlite3
+__pycache__/
+*.pyc
+*.log
+recordings/
+snapshots/
+.venv/
+.vscode/
