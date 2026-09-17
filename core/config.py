@@ -26,6 +26,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     'web_port': 8765,
     'web_live_fps': 8,
     'web_live_width': 1280,
+    'web_auto_open': True,
     'web_auth_enabled': True,
     'notifications_enabled': True,
     'web_password_hash': '',
