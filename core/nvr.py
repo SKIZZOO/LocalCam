@@ -19,6 +19,7 @@ from core.db import EventStore
 from core.motion import MotionDetector
 from core.ptz import PTZController
 from core.recorder import Recorder
+from core.webrtc import WebRTCManager
 from core.rtsp import RTSP_AUTO_TRANSPORT, RTSP_USER_AGENT, with_credentials
 
 try:
@@ -444,6 +445,7 @@ class LocalCamServer:
         cfg = load_config()
         self.store.ensure_legacy_admin(str(cfg.get('web_password_hash', '')))
         self.ptz = PTZController(self.log)
+        self.webrtc = WebRTCManager(self.log)
         self.streams = {}
         self.rebuild_streams()
 
@@ -562,6 +564,8 @@ class LocalCamServer:
         for s in list(self.streams.values()):
             s.stop()
         self.streams.clear()
+        if getattr(self, 'webrtc', None):
+            self.webrtc.close()
 
     def url(self):
         cfg = self.cfg()
