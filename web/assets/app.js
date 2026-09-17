@@ -39,6 +39,7 @@ async function connectWebRTC(stream, video, fallback, quality, generation) {
   const pc = new RTCPeerConnection({ iceServers: [] });
   webrtcPeers.set(peerId, pc);
   pc.addTransceiver('video', { direction: 'recvonly' });
+  pc.addTransceiver('audio', { direction: 'recvonly' });
   pc.addEventListener('track', (event) => {
     const remote = event.streams?.[0];
     if (remote) {
