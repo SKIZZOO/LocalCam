@@ -6,6 +6,7 @@ title LocalCam Launcher
 set "ROOT=%~dp0"
 set "VENV=%ROOT%.venv\Scripts\python.exe"
 set "SYSTEM_PY="
+set "UI_VERSION=0.8.1"
 
 where py >nul 2>&1
 if not errorlevel 1 set "SYSTEM_PY=py -3"
@@ -20,6 +21,8 @@ if errorlevel 1 goto :python_old
 
 if not exist "%ROOT%app.py" goto :project_missing
 if not exist "%ROOT%requirements.txt" goto :requirements_missing
+if not exist "%ROOT%web\assets\app.css" goto :web_missing
+if not exist "%ROOT%web\login.html" goto :web_missing
 
 cls
 echo.
@@ -29,6 +32,14 @@ echo ========================================
 echo.
 echo Windows launcher and environment check
 echo.
+echo Project folder: %ROOT%
+echo Expected web UI:  %UI_VERSION%
+echo.
+
+findstr /C:"/assets/app.css?v=%UI_VERSION%" "%ROOT%web\login.html" >nul 2>&1
+if errorlevel 1 goto :stale_project
+findstr /C:"/assets/app.css?v=%UI_VERSION%" "%ROOT%web\index.html" >nul 2>&1
+if errorlevel 1 goto :stale_project
 
 if not exist "%VENV%" (
   echo No LocalCam Python environment was found.
@@ -80,7 +91,7 @@ if errorlevel 1 (
   where winget >nul 2>&1
   if not errorlevel 1 (
     choice /C YN /N /M "Install FFmpeg with Windows winget now? [Y/N] "
-    if not errorlevel 2 (
+    if not errorlevel 1 (
       winget install --id Gyan.FFmpeg.Shared --exact --accept-package-agreements --accept-source-agreements
       if errorlevel 1 echo FFmpeg installation was not completed. Install it manually and add it to PATH.
     )
@@ -157,6 +168,23 @@ exit /b 1
 :requirements_missing
 echo.
 echo requirements.txt was not found. The project files are incomplete.
+pause
+exit /b 1
+
+:web_missing
+echo.
+echo LocalCam web files are missing.
+echo Re-download the current project from GitHub and run run.bat again.
+pause
+exit /b 1
+
+:stale_project
+echo.
+echo This LocalCam folder contains an older web UI.
+echo Expected web UI version: %UI_VERSION%
+echo.
+echo Replace this project folder with the latest copy from GitHub.
+echo Your .venv, config.json, database and recordings can be kept separately.
 pause
 exit /b 1
 
