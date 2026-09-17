@@ -8,21 +8,30 @@ set "VENV=%ROOT%.venv\Scripts\python.exe"
 set "SYSTEM_PY="
 set "UI_VERSION=0.9.0"
 
+:detect_python
+set "SYSTEM_PY="
 where py >nul 2>&1
 if not errorlevel 1 set "SYSTEM_PY=py -3"
 if not defined SYSTEM_PY (
   where python >nul 2>&1
   if not errorlevel 1 set "SYSTEM_PY=python"
 )
-if not defined SYSTEM_PY goto :python_missing
+if defined SYSTEM_PY goto :check_python_version
 
+goto :python_missing
+
+:check_python_version
 %SYSTEM_PY% -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)" >nul 2>&1
-if errorlevel 1 goto :python_old
+if not errorlevel 1 goto :project_checks
 
+goto :python_old
+
+:project_checks
 if not exist "%ROOT%app.py" goto :project_missing
 if not exist "%ROOT%requirements.txt" goto :requirements_missing
 if not exist "%ROOT%web\assets\app.css" goto :web_missing
 if not exist "%ROOT%web\login.html" goto :web_missing
+if not exist "%ROOT%web\assets\app.js" goto :web_missing
 
 cls
 echo.
@@ -148,18 +157,79 @@ if errorlevel 1 exit /b 1
 exit /b 0
 
 :python_missing
+cls
 echo.
-echo Python 3.11 or newer was not found.
-echo Install Python from:
-echo https://www.python.org/downloads/windows/
+echo ========================================
+echo              LOCALCAM NVR
+echo ========================================
+echo.
+echo Python 3.11 or newer was not found on this computer.
+echo LocalCam needs Python to create its private environment.
+echo.
+where winget >nul 2>&1
+if not errorlevel 1 (
+  choice /C YN /N /M "Install Python 3.13 with Windows winget now? [Y/N] "
+  if errorlevel 2 goto :python_cancelled
+  echo.
+  echo Installing Python 3.13...
+  winget install --id Python.Python.3.13 --exact --accept-package-agreements --accept-source-agreements
+  if errorlevel 1 goto :python_install_failed
+  echo.
+  echo Python installation completed.
+  echo LocalCam will restart the launcher so the new Python installation is detected.
+  timeout /t 2 /nobreak >nul
+  start "LocalCam Launcher" cmd /d /c ""%~f0""
+  exit /b 0
+) else (
+  echo Windows Package Manager (winget) is not available.
+  echo Install Python manually from:
+  echo https://www.python.org/downloads/windows/
+  pause
+  exit /b 1
+)
+
+:python_old
+cls
+echo.
+echo ========================================
+echo              LOCALCAM NVR
+echo ========================================
+echo.
+echo Python 3.11 or newer is required, but the detected Python is older.
+echo LocalCam will use a separate environment and will not replace your existing project environments.
+echo.
+where winget >nul 2>&1
+if not errorlevel 1 (
+  choice /C YN /N /M "Install Python 3.13 with Windows winget now? [Y/N] "
+  if errorlevel 2 goto :python_cancelled
+  echo.
+  echo Installing Python 3.13...
+  winget install --id Python.Python.3.13 --exact --accept-package-agreements --accept-source-agreements
+  if errorlevel 1 goto :python_install_failed
+  echo.
+  echo Python installation completed.
+  echo LocalCam will restart the launcher so the new Python installation is detected.
+  timeout /t 2 /nobreak >nul
+  start "LocalCam Launcher" cmd /d /c ""%~f0""
+  exit /b 0
+) else (
+  echo Windows Package Manager (winget) is not available.
+  echo Install or update Python manually from:
+  echo https://www.python.org/downloads/windows/
+  pause
+  exit /b 1
+)
+
+:python_cancelled
+echo.
+echo Python setup was cancelled. LocalCam was not started.
 pause
 exit /b 1
 
-:python_old
+:python_install_failed
 echo.
-echo Python 3.11 or newer is required.
-echo Install or update Python from:
-echo https://www.python.org/downloads/windows/
+echo Python installation did not complete successfully.
+echo Please check the winget message above and run LocalCam again.
 pause
 exit /b 1
 
