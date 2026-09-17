@@ -247,6 +247,7 @@
         else if(b===reset) zoom(viewer,1);
         else if(b===full) await body.requestFullscreen?.();
         else if(b.dataset.ptz){
+          if (b.dataset.holdPtz && b.textContent !== '⌂') return;
           if(b.textContent==='⌂') await apiControl(id,'home');
           else await apiControl(id,'move',{pan:Number(b.dataset.pan),tilt:Number(b.dataset.tilt),zoom:0,seconds:.3});
         } else if(b.dataset.optical) await apiControl(id,'move',{pan:0,tilt:0,zoom:Number(b.dataset.optical),seconds:.3});
