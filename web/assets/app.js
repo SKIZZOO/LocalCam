@@ -1,422 +1,46 @@
-const state = { info: null, settings: null, streams: [], lastEventId: 0 };
-const $ = (id) => document.getElementById(id);
-
-const esc = (value) => String(value ?? '').replace(/[&<>\"]/g, (char) => ({
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '\"': '&quot;'
-}[char]));
-
-function fmtBytes(value) {
-  let n = Number(value || 0);
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let index = 0;
-  while (n >= 1024 && index < units.length - 1) {
-    n /= 1024;
-    index += 1;
-  }
-  return `${n.toFixed(index ? 1 : 0)} ${units[index]}`;
-}
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-async function api(url, options = {}) {
-  const response = await fetch(url, options);
-  if (response.status === 401) {
-    location.href = '/login';
-    throw new Error('Authentication required');
-  }
-  const text = await response.text();
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
-  if (!response.ok) {
-    throw new Error(data.error || `HTTP ${response.status}`);
-  }
-  return data;
-}
-
-function showPage(name) {
-  document.querySelectorAll('.page').forEach((node) => node.classList.remove('active'));
-  document.querySelectorAll('.nav').forEach((node) => node.classList.toggle('active', node.dataset.page === name));
-  $(`page-${name}`).classList.add('active');
-
-  const titles = {
-    dashboard: ['Dashboard', 'Live monitoring, recording, and system status.'],
-    archive: ['Archive', 'Find, play, and download recordings.'],
-    events: ['Events', 'Motion history and captured event snapshots.'],
-    settings: ['Settings', 'Storage, server, motion, cameras, and security.']
-  };
-  $('title').textContent = titles[name][0];
-  $('subtitle').textContent = titles[name][1];
-
-  if (name === 'archive') {
-    loadRecordings();
-  } else if (name === 'events') {
-    loadEvents();
-  } else if (name === 'settings') {
-    loadSettings();
-  }
-}
-
-function setupNav() {
-  document.querySelectorAll('.nav').forEach((button) => button.addEventListener('click', () => showPage(button.dataset.page)));
-  document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
-    document.querySelectorAll('.tab,.settings-panel').forEach((node) => node.classList.remove('active'));
-    button.classList.add('active');
-    $(`tab-${button.dataset.tab}`).classList.add('active');
-  }));
-}
-
-function cameraCard(stream) {
-  const badge = stream.motion ? 'MOTION' : stream.recording ? 'REC' : stream.online ? 'LIVE' : 'OFFLINE';
-  const cls = stream.motion ? 'warn' : stream.online ? 'good' : '';
-  return `<article class="cam">
-    <div class="cam-head">
-      <div class="cam-title">${esc(stream.name)}</div>
-      <span class="pill ${cls}">${badge}</span>
-    </div>
-    <div class="cam-body" data-camera="${esc(stream.id)}">
-      <img src="/live/${encodeURIComponent(stream.id)}.mjpg" alt="${esc(stream.name)}" ondblclick="fullscreenCamera('${esc(stream.id)}')">
-      <div class="cam-overlay">RTSP · local LAN</div>
-    </div>
-    <div class="cam-foot">
-      <span>${stream.online ? 'Connected' : 'Waiting for stream'}</span>
-      <div class="cam-actions">
-        <button class="small-btn" onclick="capture('${esc(stream.id)}')">Snapshot</button>
-        <button class="small-btn" onclick="fullscreenCamera('${esc(stream.id)}')">Fullscreen</button>
-        <button class="small-btn" onclick="toggleRecord('${esc(stream.id)}',${stream.recording})">${stream.recording ? 'Stop' : 'Record'}</button>
-      </div>
-    </div>
-  </article>`;
-}
-
-function renderDashboard() {
-  const grid = $('cameraGrid');
-  if (!state.streams.length) {
-    grid.innerHTML = '<div class="panel">No camera streams configured.</div>';
-    return;
-  }
-  grid.innerHTML = state.streams.map(cameraCard).join('');
-}
-
-async function loadInfo() {
-  try {
-    state.info = await api('/api/info');
-    $('sideStatus').textContent = 'Online';
-    $('sideUrl').textContent = state.info.url.replace('http://', '');
-    $('version').textContent = `v${state.info.version}`;
-    $('mStreams').textContent = state.info.streams.length;
-    $('mFree').textContent = state.info.storage.free_human;
-    $('mDrive').textContent = state.info.storage.path;
-    $('mUsed').textContent = `${state.info.storage.used_percent}%`;
-    $('diskBar').style.width = `${Math.min(100, state.info.storage.used_percent)}%`;
-    $('mMode').textContent = String(state.info.record_mode || 'manual').toUpperCase();
-    $('sideDot').classList.remove('bad');
-  } catch (error) {
-    console.error(error);
-    $('sideStatus').textContent = 'Server error';
-    $('sideDot').classList.add('bad');
-  }
-}
-
-async function loadStreams() {
-  try {
-    state.streams = await api('/api/streams');
-    renderDashboard();
-    fillCameraSelects();
-  } catch (error) {
-    console.error(error);
-  }
-}
-
-function fillCameraSelects() {
-  const options = '<option value="">All cameras</option>' + state.streams.map((stream) => `<option value="${esc(stream.id)}">${esc(stream.name)}</option>`).join('');
-  $('archiveCamera').innerHTML = options;
-  $('eventsCamera').innerHTML = options;
-}
-
-async function capture(id) {
-  const response = await fetch(`/api/snapshot/${encodeURIComponent(id)}`);
-  if (!response.ok) return;
-  const blob = await response.blob();
-  const anchor = document.createElement('a');
-  anchor.href = URL.createObjectURL(blob);
-  anchor.download = `${id}-${Date.now()}.jpg`;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(anchor.href), 1000);
-}
-
-function fullscreenCamera(id) {
-  const node = document.querySelector(`[data-camera="${CSS.escape(id)}"]`);
-  if (node && node.requestFullscreen) node.requestFullscreen().catch(() => {});
-}
-
-async function toggleRecord(id, recording) {
-  await api(`/api/record/${encodeURIComponent(id)}/${recording ? 'stop' : 'start'}`, { method: 'POST' });
-  await Promise.all([loadInfo(), loadStreams()]);
-}
-
-function drawTimeline(items, events) {
-  const box = $('timeline');
-  box.innerHTML = '';
-  for (let hour = 0; hour < 24; hour += 1) {
-    const node = document.createElement('div');
-    node.className = 'hour';
-    node.style.left = `${(hour / 24) * 100}%`;
-    node.textContent = String(hour).padStart(2, '0');
-    box.appendChild(node);
-  }
-
-  items.forEach((item) => {
-    const start = new Date(item.start);
-    const end = new Date(item.end);
-    const startSeconds = start.getHours() * 3600 + start.getMinutes() * 60 + start.getSeconds();
-    const duration = Math.max(1, (end - start) / 1000);
-    const node = document.createElement('div');
-    node.className = 'segment';
-    node.style.left = `${(startSeconds / 86400) * 100}%`;
-    node.style.width = `${Math.max(0.3, (duration / 86400) * 100)}%`;
-    node.title = `${item.camera} · click to play`;
-    node.onclick = () => playRecording(item.id, item.id.split('/').pop());
-    box.appendChild(node);
-  });
-
-  events.forEach((event) => {
-    const start = new Date(event.started_at);
-    const seconds = start.getHours() * 3600 + start.getMinutes() * 60 + start.getSeconds();
-    const node = document.createElement('div');
-    node.className = 'event';
-    node.style.left = `${(seconds / 86400) * 100}%`;
-    node.title = `${event.camera_name} · ${start.toLocaleTimeString()}`;
-    box.appendChild(node);
-  });
-}
-
-async function loadTimeline() {
-  const date = $('archiveDate').value || today();
-  $('timelineDate').textContent = date;
-  const camera = $('archiveCamera').value || '';
-  const [segments, events] = await Promise.all([
-    api(`/api/timeline?date=${encodeURIComponent(date)}&camera=${encodeURIComponent(camera)}`),
-    api(`/api/events?date=${encodeURIComponent(date)}&camera=${encodeURIComponent(camera)}`)
-  ]);
-  drawTimeline(segments, events);
-}
-
-async function loadRecordings() {
-  const date = $('archiveDate').value || today();
-  const camera = $('archiveCamera').value || '';
-  const q = $('archiveSearch').value || '';
-  const rows = await api(`/api/recordings?date=${encodeURIComponent(date)}&camera=${encodeURIComponent(camera)}&q=${encodeURIComponent(q)}`);
-  $('archiveCount').textContent = `${rows.length} segments`;
-  $('recordingsList').innerHTML = rows.length ? rows.map((row) => `<div class="row">
-    <div><b>${esc(row.camera)}</b><small>${esc(row.time)} · ${esc(row.name)} · ${esc(row.size_human)}</small></div>
-    <div class="row-actions"><button class="icon-btn" onclick="playRecording('${esc(row.id)}','${esc(row.name)}')">Play</button><a class="icon-btn" href="/api/download?path=${encodeURIComponent(row.id)}">Download</a></div>
-  </div>`).join('') : '<div class="muted">No recordings match the selected filters.</div>';
-  await loadTimeline();
-}
-
-function playRecording(id, name) {
-  $('player').src = `/api/media?path=${encodeURIComponent(id)}`;
-  $('playbackName').textContent = name;
-  $('player').play().catch(() => {});
-}
-
-async function loadEvents() {
-  const date = $('eventsDate').value || today();
-  const camera = $('eventsCamera').value || '';
-  const rows = await api(`/api/events?date=${encodeURIComponent(date)}&camera=${encodeURIComponent(camera)}`);
-  $('eventsCount').textContent = `${rows.length} events`;
-  $('eventsList').innerHTML = rows.length ? rows.map((event) => {
-    const snapshot = event.snapshot_path ? `/api/event-snapshot/${encodeURIComponent(event.snapshot_path) .replaceAll('%2F', '/')}` : '';
-    return `<div class="event">
-      <div>${snapshot ? `<img class="thumb" src="${snapshot}" loading="lazy" alt="Motion event">` : '<div class="thumb"></div>'}</div>
-      <div class="event-main"><b>${esc(event.camera_name)}</b><small>${esc(event.started_at.replace('T', ' '))}${event.ended_at ? ` → ${esc(event.ended_at.replace('T', ' '))}` : ' · active'}</small></div>
-      <span><span class="pill warn">MOTION</span>${event.acknowledged ? '' : `<button class="icon-btn" onclick="ackEvent(${event.id})">Acknowledge</button>`}</span>
-    </div>`;
-  }).join('') : '<div class="muted">No events for this date.</div>';
-}
-
-async function ackEvent(id) {
-  await api(`/api/events/${id}/ack`, { method: 'POST' });
-  loadEvents();
-}
-
-async function loadSettings() {
-  const settings = await api('/api/settings');
-  state.settings = settings;
-  $('sRecordRoot').value = settings.record_root;
-  $('sSnapshotRoot').value = settings.snapshot_root;
-  $('sRecordMode').value = settings.record_mode;
-  $('sSegment').value = settings.segment_minutes;
-  $('sMinFree').value = settings.min_free_gb;
-  $('sRetention').value = settings.max_retention_days;
-  $('sBind').value = settings.web_bind;
-  $('sPort').value = settings.web_port;
-  $('sFps').value = settings.web_live_fps;
-  $('sWidth').value = settings.web_live_width;
-  $('sEnabled').checked = !!settings.web_enabled;
-  $('sAutoOpen').checked = !!settings.web_auto_open;
-  $('mEnabled').checked = !!settings.motion.enabled;
-  $('mInterval').value = settings.motion.interval_seconds;
-  $('mThreshold').value = settings.motion.threshold;
-  $('mFraction').value = settings.motion.min_changed_fraction;
-  $('mCooldown').value = settings.motion.cooldown_seconds;
-  $('mSnapshots').checked = !!settings.motion.save_event_snapshots;
-  $('mNotifications').checked = !!settings.notifications_enabled;
-  $('sAuth').checked = !!settings.web_auth_enabled;
-  $('sPassword').value = '';
-  renderCameraEditor(settings.cameras || []);
-}
-
-function renderCameraEditor(cameras) {
-  $('cameraEditor').innerHTML = cameras.map((camera, index) => `<div class="camera-row" data-index="${index}">
-    <input data-k="id" value="${esc(camera.id)}" placeholder="ID">
-    <input data-k="name" value="${esc(camera.name)}" placeholder="Name">
-    <input data-k="url" value="${esc(camera.url)}" placeholder="rtsp://IP:554/live/ch00_0">
-    <input data-k="username" value="${esc(camera.username || 'admin')}" placeholder="Username">
-    <input data-k="password" type="password" value="" placeholder="Keep existing password">
-    <button class="icon-btn" onclick="testCamera('${esc(camera.id)}')">Test</button>
-    <button class="icon-btn" onclick="removeCamera(${index})">Remove</button>
-  </div>`).join('') || '<div class="muted">No cameras configured.</div>';
-}
-
-function collectCameras() {
-  return [...document.querySelectorAll('.camera-row')]
-    .map((row) => {
-      const get = (key) => row.querySelector(`[data-k="${key}"]`)?.value || '';
-      const old = state.settings.cameras[Number(row.dataset.index)] || {};
-      const entered = get('password');
-      return {
-        id: get('id').trim() || `camera-${Number(row.dataset.index) + 1}`,
-        name: get('name').trim() || `Camera ${Number(row.dataset.index) + 1}`,
-        url: get('url').trim(),
-        username: get('username').trim() || 'admin',
-        password: entered || old.password || ''
-      };
-    })
-    .filter((camera) => camera.url);
-}
-
-function removeCamera(index) {
-  state.settings.cameras.splice(index, 1);
-  renderCameraEditor(state.settings.cameras);
-}
-
-$('addCamera')?.addEventListener('click', () => {
-  state.settings.cameras.push({
-    id: `camera-${state.settings.cameras.length + 1}`,
-    name: `Camera ${state.settings.cameras.length + 1}`,
-    url: '',
-    username: 'admin',
-    password: ''
-  });
-  renderCameraEditor(state.settings.cameras);
-});
-
-async function saveSettings() {
-  const payload = {
-    record_root: $('sRecordRoot').value.trim(),
-    snapshot_root: $('sSnapshotRoot').value.trim(),
-    record_mode: $('sRecordMode').value,
-    segment_minutes: Number($('sSegment').value),
-    min_free_gb: Number($('sMinFree').value),
-    max_retention_days: Number($('sRetention').value),
-    notifications_enabled: $('mNotifications').checked,
-    web_bind: $('sBind').value,
-    web_port: Number($('sPort').value),
-    web_live_fps: Number($('sFps').value),
-    web_live_width: Number($('sWidth').value),
-    web_enabled: $('sEnabled').checked,
-    web_auto_open: $('sAutoOpen').checked,
-    web_auth_enabled: $('sAuth').checked,
-    web_password: $('sPassword').value,
-    motion: {
-      enabled: $('mEnabled').checked,
-      interval_seconds: Number($('mInterval').value),
-      threshold: Number($('mThreshold').value),
-      min_changed_fraction: Number($('mFraction').value),
-      cooldown_seconds: Number($('mCooldown').value),
-      save_event_snapshots: $('mSnapshots').checked
-    },
-    cameras: collectCameras()
-  };
-
-  $('settingsStatus').textContent = 'Saving…';
-  try {
-    await api('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    $('settingsStatus').textContent = 'Saved.';
-    setTimeout(() => location.reload(), 500);
-  } catch (error) {
-    $('settingsStatus').textContent = error.message;
-  }
-}
-
-async function testCamera(id) {
-  try {
-    const data = await api(`/api/health?camera=${encodeURIComponent(id)}`);
-    const item = data[id];
-    alert(item?.probe?.ok ? 'RTSP test passed.' : `RTSP test failed: ${item?.probe?.error || 'Unknown error'}`);
-  } catch (error) {
-    alert(error.message);
-  }
-}
-
-async function pollNotifications() {
-  try {
-    if (!state.settings) state.settings = await api('/api/settings').catch(() => null);
-    if (!state.settings?.notifications_enabled) return;
-    const rows = await api(`/api/events?date=${encodeURIComponent(today())}&camera=`);
-    const latest = rows.reduce((max, row) => Math.max(max, Number(row.id || 0)), 0);
-    if (!state.lastEventId) {
-      state.lastEventId = latest;
-      return;
-    }
-    const fresh = rows.filter((row) => Number(row.id || 0) > state.lastEventId);
-    state.lastEventId = latest;
-    if (fresh.length && 'Notification' in window) {
-      if (Notification.permission === 'default') await Notification.requestPermission();
-      if (Notification.permission === 'granted') {
-        fresh.slice(0, 3).forEach((event) => new Notification('LocalCam motion detected', {
-          body: `${event.camera_name} · ${event.started_at.replace('T', ' ')}`
-        }));
-      }
-    }
-  } catch (error) {
-    console.debug(error);
-  }
-}
-
-$('archiveSearchBtn').onclick = loadRecordings;
-$('eventsSearchBtn').onclick = loadEvents;
-$('archiveDate').onchange = loadRecordings;
-$('archiveCamera').onchange = loadRecordings;
-$('eventsDate').onchange = loadEvents;
-$('eventsCamera').onchange = loadEvents;
-$('refresh').onclick = () => Promise.all([loadInfo(), loadStreams()]);
-$('saveSettings').onclick = saveSettings;
-$('logout').onclick = () => api('/api/auth/logout', { method: 'POST' }).then(() => { location.href = '/login'; });
-
-function init() {
-  setupNav();
-  $('archiveDate').value = today();
-  $('eventsDate').value = today();
-  Promise.all([loadInfo(), loadStreams()]);
-  setInterval(loadInfo, 5000);
-  setInterval(loadStreams, 8000);
-  setInterval(() => { $('clock').textContent = new Date().toLocaleString(); }, 1000);
-}
-
-init();
-setInterval(pollNotifications, 5000);
+const state={info:null,settings:null,streams:[],auth:null,lastEventId:0};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
+function fmtBytes(n){n=Number(n||0);const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return `${n.toFixed(i?1:0)} ${u[i]}`;}
+function today(){return new Date().toISOString().slice(0,10);}
+function can(action){const r=state.auth?.user?.role||'viewer';return action==='view'||r==='admin'||(r==='operator'&&['control'].includes(action));}
+async function api(url,options={}){const r=await fetch(url,options);if(r.status===401){location.href='/login';throw new Error('Authentication required');}const text=await r.text();let data={};try{data=text?JSON.parse(text):{}}catch{data={raw:text}}if(!r.ok)throw new Error(data.error||`HTTP ${r.status}`);return data;}
+async function loadAuth(){state.auth=await api('/api/auth/status');$('sideUser').textContent=state.auth.user?`${state.auth.user.username} · ${state.auth.user.role}`:'—';}
+function showPage(name){if(name==='settings'&&!can('admin'))return;document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));$(`page-${name}`).classList.add('active');document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.page===name));const titles={dashboard:['Dashboard','Live monitoring, recording, and system status.'],archive:['Archive','Find, play, and download recordings.'],events:['Events','Motion history and captured event snapshots.'],settings:['Settings','Storage, server, motion, cameras, users, and backups.']};$('title').textContent=titles[name][0];$('subtitle').textContent=titles[name][1];if(name==='archive'){loadRecordings();loadTimeline();}if(name==='events')loadEvents();if(name==='settings')loadSettings();}
+function setupNav(){document.querySelectorAll('.nav').forEach(b=>b.addEventListener('click',()=>showPage(b.dataset.page)));document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.tab,.settings-panel').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(`tab-${b.dataset.tab}`).classList.add('active');if(b.dataset.tab==='security')loadUsers();}));}
+function ptzControls(s){if(!s.ptz_enabled||!can('control'))return '';return `<div class="ptz"><button onclick="ptz('${esc(s.id)}',-1,1)">↖</button><button onclick="ptz('${esc(s.id)}',0,1)">↑</button><button onclick="ptz('${esc(s.id)}',1,1)">↗</button><button onclick="ptz('${esc(s.id)}',-1,0)">←</button><button onclick="ptzHome('${esc(s.id)}')">⌂</button><button onclick="ptz('${esc(s.id)}',1,0)">→</button><button onclick="ptz('${esc(s.id)}',-1,-1)">↙</button><button onclick="ptz('${esc(s.id)}',0,-1)">↓</button><button onclick="ptz('${esc(s.id)}',1,-1)">↘</button></div>`;}
+function renderDashboard(){const grid=$('cameraGrid');if(!state.streams.length){grid.innerHTML='<div class="panel">No camera streams configured.</div>';return;}grid.innerHTML=state.streams.map(s=>{const badge=s.motion?'MOTION':s.recording?'REC':s.online?'LIVE':'OFFLINE';const cls=s.motion?'warn':s.recording?'good':s.online?'good':'';const recordButton=can('control')?`<button class="small-btn" onclick="toggleRecord('${esc(s.id)}',${s.recording})">${s.recording?'Stop':'Record'}</button>`:'';return `<article class="cam"><div class="cam-head"><div class="cam-title">${esc(s.name)}</div><span class="pill ${cls}">${badge}</span></div><div class="cam-body"><img src="/live/${encodeURIComponent(s.id)}.mjpg" alt="${esc(s.name)}"><div class="cam-overlay">RTSP · local LAN</div></div><div class="cam-foot"><span>${s.online?'Connected':'Waiting for stream'}</span><div class="cam-actions"><button class="small-btn" onclick="capture('${esc(s.id)}')">Snapshot</button>${recordButton}</div></div>${ptzControls(s)}</article>`}).join('');}
+async function loadInfo(){try{state.info=await api('/api/info');$('sideStatus').textContent='Online';$('sideUrl').textContent=state.info.url.replace('http://','');$('version').textContent=`v${state.info.version}`;$('mStreams').textContent=state.info.streams.length;$('mFree').textContent=state.info.storage.free_human;$('mDrive').textContent=state.info.storage.path;$('mUsed').textContent=`${state.info.storage.used_percent}%`;$('diskBar').style.width=`${Math.min(100,state.info.storage.used_percent)}%`;$('mSystem').textContent=state.info.system.cpu_percent==null?'—':`${state.info.system.cpu_percent}% / ${state.info.system.memory_percent}%`;$('mUptime').textContent=`Uptime ${Math.floor(state.info.system.uptime_seconds/3600)}h`;$('sideDot').classList.remove('bad');}catch(e){$('sideStatus').textContent='Server error';$('sideDot').classList.add('bad');}}
+async function loadStreams(){try{state.streams=await api('/api/streams');renderDashboard();fillCameraSelects();}catch(e){console.error(e)}}
+function fillCameraSelects(){const opts='<option value="">All cameras</option>'+state.streams.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');$('archiveCamera').innerHTML=opts;$('eventsCamera').innerHTML=opts;}
+async function capture(id){const r=await fetch(`/api/snapshot/${encodeURIComponent(id)}`);const b=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`${id}-${Date.now()}.jpg`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
+async function toggleRecord(id,recording){await api(`/api/record/${encodeURIComponent(id)}/${recording?'stop':'start'}`,{method:'POST'});await Promise.all([loadInfo(),loadStreams()]);}
+async function ptz(id,pan,tilt){try{await api(`/api/ptz/${encodeURIComponent(id)}/move`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pan,tilt,seconds:.35})});}catch(e){alert(e.message)}}
+async function ptzHome(id){try{await api(`/api/ptz/${encodeURIComponent(id)}/home`,{method:'POST'});}catch(e){alert(e.message)}}
+function drawTimeline(items,events){const box=$('timeline');box.innerHTML='';for(let h=0;h<24;h++){const e=document.createElement('div');e.className='hour';e.style.left=`${(h/24)*100}%`;e.textContent=String(h).padStart(2,'0');box.appendChild(e);}items.forEach(item=>{const d=new Date(item.start),end=new Date(item.end),startSec=d.getHours()*3600+d.getMinutes()*60+d.getSeconds(),endSec=Math.min(86400,startSec+(end-d)/1000);const el=document.createElement('button');el.className='segment';el.style.left=`${(startSec/86400)*100}%`;el.style.width=`${Math.max(.3,((endSec-startSec)/86400)*100)}%`;el.title=`${item.camera} · ${d.toLocaleTimeString()}`;el.onclick=()=>playRecording(item.id,item.id.split('/').pop());box.appendChild(el);});events.forEach(ev=>{const d=new Date(ev.started_at),sec=d.getHours()*3600+d.getMinutes()*60+d.getSeconds(),el=document.createElement('div');el.className='event';el.style.left=`${(sec/86400)*100}%`;el.title=`${ev.camera_name} · ${d.toLocaleTimeString()}`;box.appendChild(el);});}
+async function loadTimeline(){const day=$('archiveDate').value||today();$('timelineDate').textContent=day;const camera=$('archiveCamera').value||'';const [segments,events]=await Promise.all([api(`/api/timeline?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}`),api(`/api/events?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}`)]);drawTimeline(segments,events);}
+async function loadRecordings(){const day=$('archiveDate').value||today(),camera=$('archiveCamera').value||'',q=$('archiveSearch').value||'',rows=await api(`/api/recordings?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}&q=${encodeURIComponent(q)}`);$('archiveCount').textContent=`${rows.length} segments`;$('recordingsList').innerHTML=rows.length?rows.map(r=>`<div class="row"><div><b>${esc(r.camera)}</b><small>${esc(r.time)} · ${esc(r.name)} · ${esc(r.size_human)}</small></div><div class="row-actions"><button class="icon-btn" onclick="playRecording('${esc(r.id)}','${esc(r.name)}')">Play</button><a class="icon-btn" href="/api/download?path=${encodeURIComponent(r.id)}">Download</a></div></div>`).join(''):'<div class="muted">No recordings match the selected filters.</div>';await loadTimeline();}
+function playRecording(id,name){const v=$('player');v.src=`/api/media?path=${encodeURIComponent(id)}`;$('playbackName').textContent=name;v.play().catch(()=>{});}
+function seekPlayer(seconds){const v=$('player');if(Number.isFinite(v.duration))v.currentTime=Math.max(0,Math.min(v.duration,v.currentTime+seconds));}
+function fmtTime(s){if(!Number.isFinite(s))return'00:00';const m=Math.floor(s/60),sec=Math.floor(s%60);return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;}
+async function loadEvents(){const day=$('eventsDate').value||today(),camera=$('eventsCamera').value||'',rows=await api(`/api/events?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}`);$('eventsCount').textContent=`${rows.length} events`;$('eventsList').innerHTML=rows.length?rows.map(e=>{const snap=e.snapshot_path?'/api/event-snapshot/'+encodeURIComponent(e.snapshot_path.split(/[\\/]/).slice(-3).join('/')).replaceAll('%2F','/'):'';return `<div class="event">${snap?`<img class="thumb" src="${snap}" loading="lazy">`:'<div class="thumb"></div>'}<div class="event-main"><b>${esc(e.camera_name)}</b><small>${esc(e.started_at.replace('T',' '))}${e.ended_at?` → ${esc(e.ended_at.replace('T',' '))}`:' · active'}</small></div>${can('control')?`<button class="icon-btn" onclick="ackEvent(${e.id})">Acknowledge</button>`:''}<span class="pill warn">MOTION</span></div>`}).join(''):'<div class="muted">No events for this date.</div>';}
+async function ackEvent(id){await api(`/api/events/${id}/ack`,{method:'POST'});loadEvents();}
+async function loadSettings(){const s=await api('/api/settings');state.settings=s;$('sRecordRoot').value=s.record_root;$('sSnapshotRoot').value=s.snapshot_root;$('sRecordMode').value=s.record_mode;$('sSegment').value=s.segment_minutes;$('sMinFree').value=s.min_free_gb;$('sRetention').value=s.max_retention_days;$('sBind').value=s.web_bind;$('sPort').value=s.web_port;$('sFps').value=s.web_live_fps;$('sWidth').value=s.web_live_width;$('sFfmpeg').value=s.ffmpeg_path;$('sSessionHours').value=s.web_session_hours;$('sEnabled').checked=!!s.web_enabled;$('sAutoOpen').checked=!!s.web_auto_open;$('sAuth').checked=!!s.web_auth_enabled;$('mEnabled').checked=!!s.motion?.enabled;$('mInterval').value=s.motion?.interval_seconds??.5;$('mThreshold').value=s.motion?.threshold??8;$('mFraction').value=s.motion?.min_changed_fraction??.012;$('mCooldown').value=s.motion?.cooldown_seconds??15;$('mSnapshots').checked=!!s.motion?.save_event_snapshots;$('mNotifications').checked=!!s.notifications_enabled;renderCameraEditor(s.cameras||[]);loadUsers();}
+function renderCameraEditor(cameras){$('cameraEditor').innerHTML=cameras.map((c,i)=>`<div class="camera-block" data-index="${i}"><div class="camera-row"><input data-k="id" value="${esc(c.id)}" placeholder="ID"><input data-k="name" value="${esc(c.name)}" placeholder="Name"><input data-k="url" value="${esc(c.url)}" placeholder="rtsp://IP:554/live/ch00_0"><input data-k="username" value="${esc(c.username||'admin')}" placeholder="Username"><input data-k="password" type="password" placeholder="Keep existing password"><button class="icon-btn" onclick="testCamera('${esc(c.id)}')">Test RTSP</button><button class="icon-btn danger-text" onclick="removeCamera(${i})">Remove</button></div><div class="ptz-editor"><label><input data-k="ptzEnabled" type="checkbox" ${c.ptz?.enabled?'checked':''}> Enable ONVIF PTZ</label><input data-k="ptzHost" value="${esc(c.ptz?.host||'')}" placeholder="ONVIF host/IP"><input data-k="ptzPort" type="number" value="${c.ptz?.port||80}" placeholder="Port"><input data-k="ptzUser" value="${esc(c.ptz?.username||'')}" placeholder="ONVIF username"><input data-k="ptzPass" type="password" placeholder="Keep existing ONVIF password"><button class="icon-btn" onclick="testPTZ('${esc(c.id)}')">Test PTZ</button></div></div>`).join('')||'<div class="muted">No cameras configured.</div>';}
+function collectCameras(){return [...document.querySelectorAll('.camera-block')].map(row=>{const get=k=>row.querySelector(`[data-k="${k}"]`);const old=state.settings.cameras[Number(row.dataset.index)]||{};const ep=get('password')?.value||'';const ptz=old.ptz||{};const pp=get('ptzPass')?.value||'';return{id:(get('id')?.value||'').trim()||`camera-${Number(row.dataset.index)+1}`,name:(get('name')?.value||'').trim()||`Camera ${Number(row.dataset.index)+1}`,url:(get('url')?.value||'').trim(),username:(get('username')?.value||'').trim()||'admin',password:ep||old.password||'',ptz:{enabled:!!get('ptzEnabled')?.checked,host:(get('ptzHost')?.value||'').trim(),port:Number(get('ptzPort')?.value||80),username:(get('ptzUser')?.value||'').trim(),password:pp||ptz.password||''}}).filter(c=>c.url);}
+function removeCamera(i){state.settings.cameras.splice(i,1);renderCameraEditor(state.settings.cameras);}
+$('addCamera')?.addEventListener('click',()=>{state.settings.cameras.push({id:`camera-${state.settings.cameras.length+1}`,name:`Camera ${state.settings.cameras.length+1}`,url:'',username:'admin',password:'',ptz:{enabled:false,host:'',port:80,username:'',password:''}});renderCameraEditor(state.settings.cameras);});
+async function testCamera(id){try{const data=await api('/api/health?camera='+encodeURIComponent(id));const item=data[id];alert(item?.probe?.ok?'RTSP test passed.':'RTSP test failed: '+(item?.probe?.error||'unknown error'));}catch(e){alert(e.message)}}
+async function testPTZ(id){try{const r=await api('/api/ptz/test?camera='+encodeURIComponent(id));alert(r.ok?'ONVIF/PTZ connection passed.':'PTZ test failed.');}catch(e){alert(e.message)}}
+async function loadUsers(){if(!state.auth?.user||state.auth.user.role!=='admin')return;try{const users=await api('/api/users');$('userEditor').innerHTML=users.map(u=>`<div class="user-row"><div><b>${esc(u.username)}</b><small>${esc(u.role)} · ${u.enabled?'enabled':'disabled'} · last login ${esc(u.last_login||'never')}</small></div><div><select onchange="updateUser(${u.id},this.value,${u.enabled?1:0})"><option value="viewer" ${u.role==='viewer'?'selected':''}>Viewer</option><option value="operator" ${u.role==='operator'?'selected':''}>Operator</option><option value="admin" ${u.role==='admin'?'selected':''}>Admin</option></select><button class="icon-btn" onclick="toggleUser(${u.id},${u.enabled?0:1})">${u.enabled?'Disable':'Enable'}</button><button class="icon-btn danger-text" onclick="deleteUser(${u.id})">Delete</button></div></div>`).join('')||'<div class="muted">No users.</div>';}catch(e){$('userEditor').textContent=e.message}}
+async function createUser(){const username=$('newUsername').value.trim(),password=$('newPassword').value,role=$('newRole').value;try{await api('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,role})});$('newUsername').value='';$('newPassword').value='';await loadUsers();}catch(e){alert(e.message)}}
+async function updateUser(id,role,enabled){await api(`/api/users/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,enabled:!!Number(enabled)})});loadUsers();}
+async function toggleUser(id,enabled){await api(`/api/users/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!!Number(enabled)})});loadUsers();}
+async function deleteUser(id){if(!confirm('Delete this user?'))return;await api(`/api/users/${id}`,{method:'DELETE'});loadUsers();}
+async function saveSettings(){const cameras=collectCameras();const payload={record_root:$('sRecordRoot').value.trim(),snapshot_root:$('sSnapshotRoot').value.trim(),record_mode:$('sRecordMode').value,segment_minutes:Number($('sSegment').value),min_free_gb:Number($('sMinFree').value),max_retention_days:Number($('sRetention').value),notifications_enabled:$('mNotifications').checked,web_bind:$('sBind').value,web_port:Number($('sPort').value),web_live_fps:Number($('sFps').value),web_live_width:Number($('sWidth').value),ffmpeg_path:$('sFfmpeg').value.trim(),web_session_hours:Number($('sSessionHours').value),web_enabled:$('sEnabled').checked,web_auto_open:$('sAutoOpen').checked,web_auth_enabled:$('sAuth').checked,web_password:$('sPassword').value,motion:{enabled:$('mEnabled').checked,interval_seconds:Number($('mInterval').value),threshold:Number($('mThreshold').value),min_changed_fraction:Number($('mFraction').value),cooldown_seconds:Number($('mCooldown').value),save_event_snapshots:$('mSnapshots').checked},cameras};$('settingsStatus').textContent='Saving…';try{await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});$('settingsStatus').textContent='Saved. Restart may be required for bind/port changes.';state.settings=null;await Promise.all([loadInfo(),loadStreams()]);}catch(e){$('settingsStatus').textContent=e.message;}}
+async function downloadBackup(){const r=await fetch('/api/backup');if(!r.ok)throw new Error('Backup failed');const b=await r.blob(),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`LocalCam-backup-${Date.now()}.zip`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
+async function restoreBackup(){const f=$('restoreFile').files[0];if(!f)return alert('Choose a backup file first.');if(!confirm('Restore this backup? Local configuration and the event database will be replaced.'))return;const data=new Uint8Array(await f.arrayBuffer());let bin='';for(let i=0;i<data.length;i+=8192)bin+=String.fromCharCode(...data.subarray(i,i+8192));const b64=btoa(bin);$('backupStatus').textContent='Uploading and restoring…';try{const r=await api('/api/admin/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({archive_base64:b64})});$('backupStatus').textContent=r.message||'Restored.';setTimeout(()=>location.reload(),1200);}catch(e){$('backupStatus').textContent=e.message;}}
+$('archiveSearchBtn').onclick=loadRecordings;$('eventsSearchBtn').onclick=loadEvents;$('archiveDate').onchange=()=>{loadRecordings();};$('archiveCamera').onchange=()=>{loadRecordings();};$('eventsDate').onchange=loadEvents;$('eventsCamera').onchange=loadEvents;$('refresh').onclick=()=>Promise.all([loadInfo(),loadStreams()]);$('saveSettings').onclick=saveSettings;$('logout').onclick=()=>api('/api/auth/logout',{method:'POST'}).then(()=>location.href='/login');$('createUser')?.addEventListener('click',createUser);$('downloadBackup')?.addEventListener('click',()=>downloadBackup().catch(e=>alert(e.message)));$('restoreBackup')?.addEventListener('click',restoreBackup);document.querySelectorAll('[data-seek]').forEach(b=>b.addEventListener('click',()=>seekPlayer(Number(b.dataset.seek))));$('playbackSpeed').addEventListener('change',e=>$('player').playbackRate=Number(e.target.value));$('playerFullscreen').addEventListener('click',()=>{$('player').requestFullscreen?.();});$('player').addEventListener('timeupdate',()=>{$('playerCurrent').textContent=fmtTime($('player').currentTime);$('playerDuration').textContent=fmtTime($('player').duration);});document.addEventListener('keydown',e=>{if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))return;if(e.key==='ArrowLeft')seekPlayer(-10);if(e.key==='ArrowRight')seekPlayer(10);if(e.key===' '){e.preventDefault();$('player').paused?$('player').play():$('player').pause();}if(e.key.toLowerCase()==='f')$('player').requestFullscreen?.();});
+async function pollNotifications(){try{if(!state.settings)state.settings=await api('/api/settings').catch(()=>null);if(!state.settings?.notifications_enabled)return;const rows=await api('/api/events?date='+encodeURIComponent(today())+'&camera=');const latest=rows.reduce((m,x)=>Math.max(m,Number(x.id||0)),0);if(!state.lastEventId){state.lastEventId=latest;return;}const fresh=rows.filter(x=>Number(x.id||0)>state.lastEventId);state.lastEventId=latest;if(fresh.length&&'Notification'in window){if(Notification.permission==='default')await Notification.requestPermission();if(Notification.permission==='granted')for(const e of fresh.slice(0,3))new Notification('LocalCam motion detected',{body:`${e.camera_name} · ${e.started_at.replace('T',' ')}`});}}catch(e){console.debug(e)}}
+async function init(){setupNav();$('archiveDate').value=today();$('eventsDate').value=today();await loadAuth();if(state.auth.setup_required){location.href='/setup';return;}if(state.auth.user?.role!=='admin')document.querySelector('[data-page="settings"]')?.classList.add('disabled');await Promise.all([loadInfo(),loadStreams()]);setInterval(loadInfo,5000);setInterval(loadStreams,10000);setInterval(()=>{$('clock').textContent=new Date().toLocaleString();},1000);}
+init();setInterval(pollNotifications,5000);
