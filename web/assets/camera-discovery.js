@@ -94,7 +94,16 @@
       box.appendChild(card);
     });
 
-    const extras = streams.slice(1).filter((feed) => feed.suggested_url && feed.suggested_url !== primary.suggested_url);
+    const primaryChannel = channelKey(primary.suggested_url);
+    const extras = streams.slice(1).filter((feed) => {
+      const url = feed.suggested_url;
+      if (!url || url === primary.suggested_url) return false;
+      // When the selected feed is ch00_0/ch00_1, don't ask the user to add
+      // the other quality variant as a second camera; offer only other
+      // channel numbers such as ch01_0/ch01_1.
+      const feedChannel = channelKey(url);
+      return primaryChannel == null || feedChannel == null || feedChannel !== primaryChannel;
+    });
     if (extras.length) {
       const ask = document.createElement('div');
       ask.className = 'discovery-add-question';
