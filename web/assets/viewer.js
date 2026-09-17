@@ -114,6 +114,7 @@
     body.dataset.liveViewEnhanced = '1';
     body.classList.add('live-view');
     const viewer = stateFor(id, body, img);
+    const canControl = typeof window.localcamCanControl === 'function' ? window.localcamCanControl() : false;
     img.draggable = false;
 
     body.addEventListener('wheel', (e) => {
@@ -183,11 +184,13 @@
     audioGroup.append(mute, volume);
     group.appendChild(audioGroup);
 
-    const talk = document.createElement('button'); talk.type='button'; talk.className='viewer-btn'; talk.textContent='Talk'; talk.title='Hold to talk through the camera (ONVIF Profile T when supported)';
-    talk.dataset.talk='1';
-    group.appendChild(talk);
+    if (canControl) {
+      const talk = document.createElement('button'); talk.type='button'; talk.className='viewer-btn'; talk.textContent='Talk'; talk.title='Hold to talk through the camera (ONVIF Profile T when supported)';
+      talk.dataset.talk='1';
+      group.appendChild(talk);
+    }
 
-    if (ptzMap.get(id)) {
+    if (canControl && ptzMap.get(id)) {
       const pad = document.createElement('div'); pad.className='viewer-pad';
       const moves=[['↖',-1,1],['↑',0,1],['↗',1,1],['←',-1,0],['⌂',0,0],['→',1,0],['↙',-1,-1],['↓',0,-1],['↘',1,-1]];
       for (const [label,pan,tilt] of moves) {
