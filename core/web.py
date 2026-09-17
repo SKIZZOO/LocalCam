@@ -481,10 +481,21 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 if not self.server_app.role(self, 'admin', 'operator'):
                     return self._error(403, 'Operator role required')
                 if action == 'start':
-                    return self._json({'ok': stream.start_recording()})
+                    ok = stream.start_recording(force=True)
+                    if not ok:
+                        return self._json({'ok': False, 'recording': False, 'error': stream.last_error or 'Recording could not be started.'}, status=500)
+                    return self._json({'ok': True, 'recording': True})
                 if action == 'stop':
                     stream.stop_recording()
-                    return self._json({'ok': True})
+                    return self._json({'ok': True, 'recording': False})
+                if action == 'toggle':
+                    if stream.recorder and stream.recorder.running:
+                        stream.stop_recording()
+                        return self._json({'ok': True, 'recording': False})
+                    ok = stream.start_recording(force=True)
+                    if not ok:
+                        return self._json({'ok': False, 'recording': False, 'error': stream.last_error or 'Recording could not be started.'}, status=500)
+                    return self._json({'ok': True, 'recording': True})
             if path.startswith('/api/ptz/'):
                 sid = urllib.parse.unquote(path[len('/api/ptz/'):])
                 stream = self.server_app.streams.get(sid)
