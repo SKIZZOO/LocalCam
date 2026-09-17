@@ -11,7 +11,7 @@ RTSP_AUTO_TRANSPORT = 'udp'
 RTSP_TRANSPORTS = ('udp', 'tcp')
 
 # Common paths used when ONVIF cannot provide a URI. The /live/ch00_0 path is
-# included first because it is a known working pattern for this LocalCam camera.
+# tried first because it is the known working pattern for this LocalCam camera.
 # A candidate is accepted only when FFmpeg can actually read media from it.
 COMMON_RTSP_PATHS = (
     '/live/ch00_0',
@@ -188,7 +188,7 @@ def discover_and_test_rtsp(
     password: str,
     timeout_seconds: int = 2,
 ) -> dict[str, Any]:
-    """Find and validate a usable RTSP URL using ONVIF and common paths."""
+    """Find and validate a usable RTSP URL using fast known paths, then ONVIF."""
     original = url.strip()
     try:
         parsed = urlsplit(original)
@@ -199,13 +199,17 @@ def discover_and_test_rtsp(
     if not host:
         return {'ok': False, 'error': 'Camera host/IP is required.'}
 
-    onvif_candidates = _onvif_stream_uris(host, username, password) if _looks_like_root_path(original) else []
-    candidates: list[tuple[str, str]] = [(uri, 'ONVIF') for uri in onvif_candidates]
+    candidates: list[tuple[str, str]] = []
 
+    # Important: do not wait for ONVIF before trying the known media paths.
+    # ONVIF SOAP/WSDL discovery can be slow or unavailable even when RTSP works.
     if _looks_like_root_path(original):
         base = _candidate_base(original)
         if base:
-            candidates.extend((base + path, 'known/common path') for path in COMMON_RTSP_PATHS)
+            candidates.extend((base + path, 'common path') for path in COMMON_RTSP_PATHS)
+
+        # ONVIF is only a fallback after the fast RTSP path probes.
+        candidates.extend((uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password))
     else:
         candidates.append((original, 'configured URL'))
 
