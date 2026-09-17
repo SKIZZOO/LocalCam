@@ -164,6 +164,16 @@ class Recorder:
         for line in proc.stderr:
             line = line.strip()
             if line:
+                # FFmpeg can emit several redundant RTSP-open diagnostics for
+                # one failed attempt. Keep the useful URL/error line and let
+                # the watchdog report the restart instead of printing a block
+                # of near-identical messages.
+                if (
+                    'Failed reading RTSP data:' in line
+                    or 'Error opening input: Invalid data found when processing input' in line
+                    or 'Error opening input files:' in line
+                ):
+                    continue
                 safe_line = line
                 if self.username or self.password:
                     safe_line = safe_line.replace(self.username, '***').replace(self.password, '***')
