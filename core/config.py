@@ -15,11 +15,11 @@ EXAMPLE_PATH = BASE_DIR / 'config.example.json'
 
 DEFAULT_CONFIG: dict[str, Any] = {
     'app_name': 'LocalCam',
-    'version': '0.7.0',
+    'version': '0.8.0',
     'ffmpeg_path': 'ffmpeg',
     'record_root': str(BASE_DIR / 'recordings'),
     'snapshot_root': str(BASE_DIR / 'snapshots'),
-    'record_mode': 'continuous',
+    'record_mode': 'manual',
     'segment_minutes': 10,
     'min_free_gb': 20,
     'max_retention_days': 30,
@@ -121,7 +121,12 @@ def ensure_config() -> dict[str, Any]:
     if not cfg.get('web_secret'):
         cfg['web_secret'] = secrets.token_urlsafe(32)
         changed = True
+    # One-time migration: older LocalCam installs used 24/7 recording by
+    # default. New installs and upgrades are manual so opening/refreshing the
+    # web UI can never start a recording by itself.
     if cfg.get('version') != DEFAULT_CONFIG['version']:
+        if cfg.get('record_mode') == 'continuous':
+            cfg['record_mode'] = 'manual'
         cfg['version'] = DEFAULT_CONFIG['version']
         changed = True
     if changed:
