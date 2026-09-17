@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .rtsp import RTSP_AUTO_TRANSPORT, redact_rtsp_url, with_credentials
+from .rtsp import RTSP_AUTO_TRANSPORT, RTSP_USER_AGENT, redact_rtsp_url, with_credentials
 
 
 class Recorder:
@@ -63,6 +63,8 @@ class Recorder:
                 'warning',
                 '-rtsp_transport',
                 RTSP_AUTO_TRANSPORT,
+                '-user_agent',
+                RTSP_USER_AGENT,
                 '-rw_timeout',
                 '15000000',
                 '-i',
@@ -109,7 +111,7 @@ class Recorder:
             self.process = proc
             threading.Thread(target=self._read_stderr, args=(proc,), name='localcam-recorder-log', daemon=True).start()
             threading.Thread(target=self._watchdog, args=(proc,), name='localcam-recorder-watchdog', daemon=True).start()
-            self.on_log(f'{camera_name}: recording started (RTSP transport: {RTSP_AUTO_TRANSPORT.upper()})')
+            self.on_log(f'{camera_name}: recording started (RTSP transport: {RTSP_AUTO_TRANSPORT.upper()}, User-Agent: VLC-compatible)')
             return True
 
     def stop(self) -> None:
@@ -135,8 +137,6 @@ class Recorder:
         for line in proc.stderr:
             line = line.strip()
             if line:
-                # FFmpeg may echo the full input URL on failures. Never expose
-                # configured camera credentials in the LocalCam console log.
                 safe_line = line
                 if self.username or self.password:
                     safe_line = safe_line.replace(self.username, '***').replace(self.password, '***')
