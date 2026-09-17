@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import json
 import os
+import json
+import os
 import secrets
 import shutil
 import socket
@@ -222,6 +224,79 @@ class StreamState:
     def get_frame(self):
         with self.lock:
             return self.frame
+
+    def live_audio(self, handler):
+        """Stream camera audio as fragmented MP4 for browser playback."""
+        target = with_credentials(
+            self.camera['url'],
+            str(self.camera.get('username', '')),
+            str(self.camera.get('password', '')),
+        )
+        cmd = [
+            self.cfg['ffmpeg_path'],
+            '-hide_banner',
+            '-loglevel', 'error',
+            '-rtsp_transport', RTSP_AUTO_TRANSPORT,
+            '-user_agent', RTSP_USER_AGENT,
+            '-timeout', '15000000',
+            '-i', target,
+            '-map', '0:a:0?',
+            '-vn',
+            '-c:a', 'aac',
+            '-ar', '48000',
+            '-ac', '2',
+            '-b:a', '128k',
+            '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+            '-f', 'mp4',
+            'pipe:1',
+        ]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                bufsize=64 * 1024,
+            )
+        except OSError:
+            return self.server_app_error(handler, 'Live audio could not be started.')
+        handler.send_response(200)
+        handler.send_header('Content-Type', 'audio/mp4')
+        handler.send_header('Cache-Control', 'no-store')
+        handler.send_header('X-Content-Type-Options', 'nosniff')
+        handler.end_headers()
+        try:
+            while True:
+                chunk = proc.stdout.read(64 * 1024) if proc.stdout else b''
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+                handler.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            pass
+        finally:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                try: proc.kill()
+                except OSError: pass
+
+    @staticmethod
+    def server_app_error(handler, message):
+        try:
+            handler.send_response(500)
+            handler.send_header('Content-Type', 'application/json; charset=utf-8')
+            body = json.dumps({'error': message}).encode('utf-8')
+            handler.send_header('Content-Length', str(len(body)))
+            handler.end_headers()
+            handler.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            pass
 
     def mjpeg(self, handler):
         with self.lock:
@@ -570,6 +645,47 @@ class LocalCamServer:
         save_config(cfg)
         self.rebuild_streams()
         return self.safe_settings()
+
+    def talk(self, stream: StreamState, audio_path: str, volume: float = 0.05):
+        """Send a short microphone clip through an ONVIF audio backchannel."""
+        settings = stream.camera.get('ptz') or {}
+        host = str(settings.get('host') or '').strip()
+        if not host:
+            try:
+                host = __import__('urllib.parse', fromlist=['urlsplit']).urlsplit(
+                    stream.camera['url']
+                ).hostname or ''
+            except Exception:
+                host = ''
+        if not host:
+            raise RuntimeError('Camera ONVIF host is not configured.')
+
+        try:
+            from rtsp_backchannel import play_file
+        except Exception as exc:
+            raise RuntimeError(
+                'Two-way talk support is not installed. Restart run.bat so it can install the audio backchannel package.'
+            ) from exc
+
+        ffmpeg_path = str(self.cfg().get('ffmpeg_path', 'ffmpeg'))
+        ffmpeg_file = Path(ffmpeg_path)
+        if ffmpeg_file.is_file():
+            ffmpeg_dir = str(ffmpeg_file.parent.resolve())
+            os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
+
+        result = play_file(
+            host=host,
+            user=str(stream.camera.get('username', '')),
+            password=str(stream.camera.get('password', '')),
+            file=audio_path,
+            volume=max(0.0, min(1.0, float(volume))),
+            codec='auto',
+        )
+        return {
+            'codec': getattr(result, 'codec', ''),
+            'packets_sent': getattr(result, 'packets_sent', 0),
+            'duration_seconds': getattr(result, 'duration_seconds', 0),
+        }
 
     def info(self):
         cfg = self.cfg()
