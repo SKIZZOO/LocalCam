@@ -1,1 +1,170 @@
-<!doctype html><html lang="ro"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LocalCam</title><link rel="stylesheet" href="/app.css"></head><body><aside><div class="brand"><span>●</span> LocalCam</div><nav><button class="active" data-page="dashboard">Dashboard</button><button data-page="archive">Arhivă</button><button data-page="settings">Setări</button></nav><div class="side-foot">NVR local • LAN</div></aside><main><header><div><h1 id="title">Dashboard</h1><div class="muted" id="clock"></div></div><div class="actions"><span id="storage"></span><button onclick="refresh()">Reîmprospătare</button></div></header><section id="dashboard" class="page active"><div id="grid" class="grid"></div></section><section id="archive" class="page"><div class="panel"><div class="row"><input id="search" placeholder="Caută înregistrare..."><button onclick="loadArchive()">Caută</button></div><div id="archiveList"></div></div></section><section id="settings" class="page"><div class="panel"><h2>Setări locale</h2><div class="formgrid"><label>Folder înregistrări<input id="record_root"></label><label>Port web<input id="web_port" type="number"></label><label>FFmpeg<input id="ffmpeg_path" placeholder="ffmpeg sau C:/ffmpeg/bin/ffmpeg.exe"></label><label>Mod înregistrare<select id="record_mode"><option value="continuous">Continuu 24/7</option><option value="motion">La mișcare</option></select></label><label>Segment (minute)<input id="segment_minutes" type="number"></label><label>Retenție (zile)<input id="retention_days" type="number"></label><label>Min. spațiu liber (GB)<input id="min_free_gb" type="number"></label><label>Detecție mișcare<select id="motion_enabled"><option value="1">Activată</option><option value="0">Dezactivată</option></select></label><label>Prag mișcare<input id="motion_threshold" type="number" step="0.5"></label><label>Fracție modificată<input id="motion_fraction" type="number" step="0.001"></label><label>Cooldown (secunde)<input id="motion_cooldown" type="number"></label></div><h3>Camere</h3><div id="cams"></div><button class="primary" onclick="saveSettings()">Salvează</button></div></section></main><script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07111f">
+  <title>LocalCam</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="logo">LOCAL<span>CAM</span><small>NVR</small></div>
+    <div class="side-card">
+      <span class="status-dot" id="sideDot"></span>
+      <div><b id="sideStatus">Online</b><small id="sideUrl">Loading…</small></div>
+    </div>
+    <nav>
+      <button class="nav active" data-page="dashboard">Dashboard</button>
+      <button class="nav" data-page="archive">Archive</button>
+      <button class="nav" data-page="events">Events</button>
+      <button class="nav" data-page="settings">Settings</button>
+    </nav>
+    <div class="side-bottom"><small>LAN NVR</small><small id="version"></small></div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div><h1 id="title">Dashboard</h1><p id="subtitle">Live monitoring, recording, and system status.</p></div>
+      <div class="top-actions">
+        <span class="clock" id="clock"></span>
+        <button class="button ghost" id="refresh">Refresh</button>
+        <button class="button danger subtle" id="logout">Log out</button>
+      </div>
+    </header>
+
+    <section class="page active" id="page-dashboard">
+      <div class="metrics">
+        <div class="metric"><small>Streams</small><strong id="mStreams">—</strong><span>configured</span></div>
+        <div class="metric"><small>Storage free</small><strong id="mFree">—</strong><span id="mDrive">—</span></div>
+        <div class="metric"><small>Disk used</small><strong id="mUsed">—</strong><div class="bar"><i id="diskBar"></i></div></div>
+        <div class="metric"><small>Recording mode</small><strong id="mMode">—</strong><span>controller</span></div>
+      </div>
+
+      <div class="section-head">
+        <div><h2>Live view</h2><p>Shared FFmpeg preview workers keep browser streaming efficient.</p></div>
+        <span class="pill good">LIVE</span>
+      </div>
+      <div class="camera-grid" id="cameraGrid"></div>
+    </section>
+
+    <section class="page" id="page-archive">
+      <div class="panel filters">
+        <label>Date<input id="archiveDate" type="date"></label>
+        <label>Camera<select id="archiveCamera"></select></label>
+        <label class="grow">Search<input id="archiveSearch" placeholder="Search file name…"></label>
+        <button class="button primary" id="archiveSearchBtn">Search</button>
+      </div>
+
+      <div class="archive-layout">
+        <div class="panel">
+          <div class="panel-head"><h2>24-hour timeline</h2><span id="timelineDate" class="muted"></span></div>
+          <div id="timeline" class="timeline"></div>
+          <div class="timeline-legend"><span><i class="seg"></i> recording</span><span><i class="evt"></i> motion event</span></div>
+        </div>
+
+        <div class="archive-columns">
+          <div class="panel">
+            <div class="panel-head"><h2>Recordings</h2><span id="archiveCount" class="muted"></span></div>
+            <div id="recordingsList" class="list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h2>Playback</h2><span id="playbackName" class="muted"></span></div>
+            <video id="player" controls playsinline></video>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="page-events">
+      <div class="panel filters">
+        <label>Date<input id="eventsDate" type="date"></label>
+        <label>Camera<select id="eventsCamera"></select></label>
+        <button class="button primary" id="eventsSearchBtn">Search</button>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Motion events</h2><span id="eventsCount" class="muted"></span></div>
+        <div id="eventsList" class="events"></div>
+      </div>
+    </section>
+
+    <section class="page" id="page-settings">
+      <div class="settings-tabs">
+        <button class="tab active" data-tab="storage">Storage</button>
+        <button class="tab" data-tab="server">Web server</button>
+        <button class="tab" data-tab="motion">Motion</button>
+        <button class="tab" data-tab="cameras">Cameras</button>
+        <button class="tab" data-tab="security">Security</button>
+      </div>
+
+      <div class="settings-panel active" id="tab-storage">
+        <div class="panel">
+          <div class="panel-head"><h2>Storage & recording</h2><span class="pill">LOCAL</span></div>
+          <div class="form-grid">
+            <label class="wide">Recording folder<input id="sRecordRoot"></label>
+            <label class="wide">Snapshot folder<input id="sSnapshotRoot"></label>
+            <label>Recording mode<select id="sRecordMode"><option value="continuous">Continuous 24/7</option><option value="motion">Motion only</option><option value="manual">Manual</option></select></label>
+            <label>Segment length (minutes)<input id="sSegment" type="number" min="1"></label>
+            <label>Minimum free space (GB)<input id="sMinFree" type="number" min="1"></label>
+            <label>Retention (days, 0 = unlimited)<input id="sRetention" type="number" min="0"></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-panel" id="tab-server">
+        <div class="panel">
+          <div class="panel-head"><h2>Web server</h2><span class="pill good">LAN</span></div>
+          <div class="form-grid">
+            <label>Bind address<select id="sBind"><option value="0.0.0.0">All LAN interfaces</option><option value="127.0.0.1">This PC only</option></select></label>
+            <label>Port<input id="sPort" type="number" min="1024" max="65535"></label>
+            <label>Preview FPS<input id="sFps" type="number" min="1" max="20"></label>
+            <label>Preview width<input id="sWidth" type="number" min="320" max="2560"></label>
+            <label class="check"><input id="sEnabled" type="checkbox"> Enable web server</label>
+            <label class="check"><input id="sAutoOpen" type="checkbox"> Open dashboard when LocalCam starts</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-panel" id="tab-motion">
+        <div class="panel">
+          <div class="panel-head"><h2>Motion detection</h2><span class="pill warn">TUNABLE</span></div>
+          <div class="form-grid">
+            <label class="check"><input id="mEnabled" type="checkbox"> Enable motion detection</label>
+            <label>Sampling interval (seconds)<input id="mInterval" type="number" step="0.05" min="0.25"></label>
+            <label>Difference threshold<input id="mThreshold" type="number" step="0.1" min="0.1"></label>
+            <label>Changed-pixel fraction<input id="mFraction" type="number" step="0.001" min="0.001" max="1"></label>
+            <label>Cooldown (seconds)<input id="mCooldown" type="number" step="0.5" min="0"></label>
+            <label class="check"><input id="mSnapshots" type="checkbox"> Save a snapshot when motion starts</label>
+            <label class="check"><input id="mNotifications" type="checkbox"> Browser notifications for new motion events</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-panel" id="tab-cameras">
+        <div class="panel">
+          <div class="panel-head"><h2>Camera streams</h2><button class="button ghost" id="addCamera">Add camera</button></div>
+          <div id="cameraEditor" class="camera-editor"></div>
+        </div>
+      </div>
+
+      <div class="settings-panel" id="tab-security">
+        <div class="panel">
+          <div class="panel-head"><h2>Local web security</h2><span class="pill good">PBKDF2</span></div>
+          <div class="form-grid">
+            <label class="check"><input id="sAuth" type="checkbox"> Require web login</label>
+            <label class="wide">New web password<input id="sPassword" type="password" placeholder="Leave empty to keep the current password"></label>
+          </div>
+          <p class="hint">The password is stored as a PBKDF2-SHA256 hash in the local configuration file. Do not expose the web port directly to the internet.</p>
+        </div>
+      </div>
+
+      <div class="save-row"><span id="settingsStatus" class="muted"></span><button class="button primary" id="saveSettings">Save settings</button></div>
+    </section>
+
+    <footer>LocalCam · RTSP + FFmpeg · local-first NVR</footer>
+  </main>
+</div>
+<script src="/assets/app.js"></script>
+</body>
+</html>
