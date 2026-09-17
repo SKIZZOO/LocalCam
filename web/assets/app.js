@@ -1,4 +1,4 @@
-const state = { info: null, settings: null, streams: [], auth: null };
+const state = { info: null, settings: null, streams: [], auth: null, liveQuality: localStorage.getItem('localcam.liveQuality') || 'high' };
 window.localcamCanControl = () => {
   const role = state.auth?.user?.role;
   return role === 'admin' || role === 'operator';
@@ -166,6 +166,8 @@ function fillCameraSelects() {
   $('eventsCamera').innerHTML = options;
 }
 
+function selectedLiveQuality() { return state.liveQuality || 'high'; }
+
 function renderDashboard() {
   const grid = $('cameraGrid');
   if (!state.streams.length) {
@@ -174,6 +176,7 @@ function renderDashboard() {
   }
 
   grid.innerHTML = state.streams.map((stream) => {
+    const quality = selectedLiveQuality();
     const badge = stream.motion ? 'MOTION' : stream.recording ? 'REC' : stream.online ? 'LIVE' : 'OFFLINE';
     const cls = stream.motion || stream.recording || stream.online ? 'good' : '';
     const recordButton = can('control') ?
@@ -197,11 +200,22 @@ function renderDashboard() {
 
     return `<article class="cam">
       <div class="cam-head"><div class="cam-title">${esc(stream.name)}</div><span class="pill ${cls}">${badge}</span></div>
-      <div class="cam-body"><img src="/live/${encodeURIComponent(stream.id)}.mjpg" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay">RTSP · local LAN · audio</div></div>
+      <div class="cam-body"><img src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay">RTSP · local LAN · audio</div></div>
       <div class="cam-foot"><span>${stream.online ? 'Connected' : 'Waiting for stream'}</span><div class="cam-actions"><button class="small-btn" data-action="snapshot" data-id="${esc(stream.id)}">Snapshot</button>${recordButton}</div></div>
       ${ptz}
     </article>`;
   }).join('');
+}
+
+function setupLiveQuality() {
+  const select = $('liveQuality');
+  if (!select) return;
+  select.value = state.liveQuality;
+  select.addEventListener('change', () => {
+    state.liveQuality = select.value || 'high';
+    localStorage.setItem('localcam.liveQuality', state.liveQuality);
+    renderDashboard();
+  });
 }
 
 function setupDashboardActions() {
@@ -847,6 +861,7 @@ function setupTopActions() {
 
 async function init() {
   setupNavigation();
+  setupLiveQuality();
   setupDashboardActions();
   setupArchiveActions();
   setupClipEditorActions();
