@@ -1,9 +1,9 @@
 {
   "app_name": "LocalCam",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "ffmpeg_path": "ffmpeg",
-  "record_root": "G:/LocalCam/recordings",
-  "snapshot_root": "G:/LocalCam/snapshots",
+  "record_root": "recordings",
+  "snapshot_root": "snapshots",
   "record_mode": "continuous",
   "segment_minutes": 10,
   "min_free_gb": 20,
@@ -32,34 +32,5 @@
     "enabled": false,
     "port": 80
   },
-  "cameras": [
-    {
-      "id": "front-left",
-      "name": "Front - Lens 1",
-      "url": "rtsp://CAMERA_IP:554/live/ch00_0",
-      "username": "admin",
-      "password": "",
-      "ptz": {
-        "enabled": false,
-        "host": "",
-        "port": 80,
-        "username": "",
-        "password": ""
-      }
-    },
-    {
-      "id": "front-right",
-      "name": "Front - Lens 2",
-      "url": "rtsp://CAMERA_IP:554/live/ch01_0",
-      "username": "admin",
-      "password": "",
-      "ptz": {
-        "enabled": false,
-        "host": "",
-        "port": 80,
-        "username": "",
-        "password": ""
-      }
-    }
-  ]
+  "cameras": []
 }
