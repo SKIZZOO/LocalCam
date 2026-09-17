@@ -139,8 +139,8 @@
       return;
     }
     const current = collectCameras();
-    const sourceIndex = Number(block.dataset.index);
-    const source = current[sourceIndex] || current[0];
+    const sourceId = block.querySelector('[data-k="id"]')?.value.trim() || '';
+    const source = current.find((camera) => camera.id === sourceId) || current[0];
     if (!source) return;
 
     const existingUrls = new Set(current.map((camera) => camera.url));
