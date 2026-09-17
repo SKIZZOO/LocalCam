@@ -137,7 +137,10 @@ def _run_probe(ffmpeg_path: str, target: str, transport: str, timeout_seconds: i
         transport,
         '-allowed_media_types',
         'video',
-        '-rw_timeout',
+        # FFmpeg's RTSP demuxer uses -timeout for socket I/O timeouts.
+        # Some Windows FFmpeg builds do not expose the generic -rw_timeout
+        # option, so using it makes a valid RTSP URL fail before probing.
+        '-timeout',
         str(timeout_seconds * 1_000_000),
         '-probesize',
         '5000000',
