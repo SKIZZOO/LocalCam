@@ -1,76 +1,81 @@
-// Interactive live-view controls: low-latency viewer helpers, digital zoom/pan,
-// fullscreen, wheel/drag navigation, and optional ONVIF PTZ controls.
+// Live camera viewer controls: digital zoom/pan plus optional physical ONVIF PTZ.
 (() => {
   const grid = document.getElementById('cameraGrid');
-  if (!grid || typeof api !== 'function') return;
+  if (!grid) return;
 
   const viewers = new Map();
-  let ptzCapabilities = new Map();
+  let ptzMap = new Map();
 
   const style = document.createElement('style');
   style.textContent = `
-    .cam-body.viewer-ready { position: relative; overflow: hidden; background: #03070c; touch-action: none; }
-    .cam-body.viewer-ready img { transform-origin: center center; will-change: transform; user-select: none; -webkit-user-drag: none; cursor: grab; }
-    .cam-body.viewer-ready img.dragging { cursor: grabbing; }
-    .viewer-toolbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; border-top:1px solid rgba(255,255,255,.08); background:rgba(7,12,20,.92); }
-    .viewer-toolbar .viewer-label { margin-right:auto; font-size:11px; color:rgba(232,241,250,.64); letter-spacing:.02em; }
+    .cam > .ptz { display:none !important; }
+    .cam-body.live-view { position:relative; overflow:hidden; background:#02060b; touch-action:none; }
+    .cam-body.live-view img { transform-origin:center center; will-change:transform; user-select:none; -webkit-user-drag:none; cursor:grab; }
+    .cam-body.live-view img.dragging { cursor:grabbing; }
+    .viewer-toolbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; border-top:1px solid rgba(255,255,255,.08); background:rgba(7,12,20,.94); }
+    .viewer-group { display:flex; align-items:center; gap:4px; }
     .viewer-btn { min-width:34px; height:30px; padding:0 9px; border:1px solid rgba(255,255,255,.11); border-radius:8px; background:rgba(20,31,47,.9); color:#eef5ff; cursor:pointer; font-size:12px; }
     .viewer-btn:hover { border-color:rgba(119,167,255,.5); background:rgba(28,43,63,.96); }
     .viewer-btn.primary { background:rgba(66,113,190,.26); border-color:rgba(119,167,255,.4); }
-    .viewer-ptz { display:grid; grid-template-columns:repeat(3,30px); gap:4px; margin-left:6px; }
-    .viewer-ptz .viewer-btn { min-width:30px; width:30px; padding:0; }
-    .viewer-zoom { display:flex; gap:4px; margin-left:4px; }
-    .viewer-status { font-size:10px; color:rgba(232,241,250,.56); margin-left:4px; min-width:42px; text-align:center; }
-    .viewer-help { width:100%; font-size:10px; color:rgba(232,241,250,.48); margin-top:1px; }
+    .viewer-pad { display:grid; grid-template-columns:repeat(3,30px); gap:4px; margin-left:auto; }
+    .viewer-pad .viewer-btn { min-width:30px; width:30px; padding:0; }
+    .viewer-status { min-width:44px; text-align:center; font-size:11px; color:rgba(232,241,250,.62); }
+    .viewer-note { width:100%; font-size:10px; color:rgba(232,241,250,.48); }
   `;
   document.head.appendChild(style);
 
-  function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
-  function makeButton(label, action, title) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'viewer-btn';
-    button.textContent = label;
-    button.dataset.viewerAction = action;
-    if (title) button.title = title;
-    return button;
+  async function refreshPtz() {
+    try {
+      const streams = await fetch('/api/streams', { credentials:'same-origin', cache:'no-store' }).then((r) => {
+        if (!r.ok) throw new Error('streams');
+        return r.json();
+      });
+      ptzMap = new Map(streams.map((s) => [String(s.id), !!s.ptz_enabled]));
+    } catch {
+      ptzMap = new Map();
+    }
   }
 
-  function stateFor(id) {
-    if (!viewers.has(id)) viewers.set(id, { zoom: 1, x: 0, y: 0, body: null, img: null });
-    return viewers.get(id);
+  function getId(img) {
+    try {
+      const url = new URL(img.currentSrc || img.src, location.href);
+      const match = url.pathname.match(/^\/live\/(.+)\.mjpg$/);
+      return match ? decodeURIComponent(match[1]) : '';
+    } catch {
+      return '';
+    }
   }
 
-  function limits(viewer) {
-    const rect = viewer.body.getBoundingClientRect();
-    return {
-      x: Math.max(0, rect.width * (viewer.zoom - 1) / 2),
-      y: Math.max(0, rect.height * (viewer.zoom - 1) / 2)
-    };
+  function stateFor(id, body, img) {
+    let viewer = viewers.get(id);
+    if (!viewer) {
+      viewer = { id, body, img, zoom:1, x:0, y:0, dragging:false };
+      viewers.set(id, viewer);
+    } else {
+      viewer.body = body;
+      viewer.img = img;
+    }
+    return viewer;
   }
 
   function apply(viewer) {
-    const max = limits(viewer);
-    viewer.x = clamp(viewer.x, -max.x, max.x);
-    viewer.y = clamp(viewer.y, -max.y, max.y);
-    viewer.img.style.transform = `translate3d(${viewer.x}px, ${viewer.y}px, 0) scale(${viewer.zoom})`;
-    const status = viewer.body.parentElement.querySelector('[data-viewer-status]');
-    if (status) status.textContent = `${Math.round(viewer.zoom * 100)}%`;
+    const rect = viewer.body.getBoundingClientRect();
+    const maxX = Math.max(0, rect.width * (viewer.zoom - 1) / 2);
+    const maxY = Math.max(0, rect.height * (viewer.zoom - 1) / 2);
+    viewer.x = clamp(viewer.x, -maxX, maxX);
+    viewer.y = clamp(viewer.y, -maxY, maxY);
+    viewer.img.style.transform = `translate3d(${viewer.x}px,${viewer.y}px,0) scale(${viewer.zoom})`;
+    const label = viewer.body.parentElement.querySelector('[data-viewer-status]');
+    if (label) label.textContent = `${Math.round(viewer.zoom * 100)}%`;
   }
 
-  function reset(viewer) {
-    viewer.zoom = 1;
-    viewer.x = 0;
-    viewer.y = 0;
-    apply(viewer);
-  }
-
-  function setZoom(viewer, next, anchorX = null, anchorY = null) {
-    const oldZoom = viewer.zoom;
-    viewer.zoom = clamp(Number(next), 1, 4);
-    if (anchorX != null && anchorY != null && oldZoom !== viewer.zoom) {
-      const factor = (viewer.zoom / oldZoom) - 1;
+  function zoom(viewer, value, anchorX = null, anchorY = null) {
+    const old = viewer.zoom;
+    viewer.zoom = clamp(value, 1, 4);
+    if (anchorX != null && anchorY != null && old !== viewer.zoom) {
+      const factor = viewer.zoom / old - 1;
       viewer.x += anchorX * factor;
       viewer.y += anchorY * factor;
     }
@@ -78,175 +83,119 @@
     apply(viewer);
   }
 
-  async function physicalPtz(id, pan, tilt, zoom) {
-    if (!ptzCapabilities.get(id)) {
-      showToast('Camera PTZ is disabled. Enable ONVIF PTZ in Settings → Cameras.', 'error');
-      return;
-    }
-    await api(`/api/ptz/${encodeURIComponent(id)}/move`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pan, tilt, zoom, seconds: 0.3 })
-    });
-  }
-
-  async function ptzHome(id) {
-    if (!ptzCapabilities.get(id)) {
-      showToast('Camera PTZ is disabled. Enable ONVIF PTZ in Settings → Cameras.', 'error');
-      return;
-    }
-    await api(`/api/ptz/${encodeURIComponent(id)}/home`, { method: 'POST' });
-  }
-
-  async function loadPtzCapabilities() {
+  async function apiControl(id, path, body) {
     try {
-      const streams = await api('/api/streams');
-      ptzCapabilities = new Map(streams.map((stream) => [stream.id, !!stream.ptz_enabled]));
-    } catch {
-      ptzCapabilities = new Map();
+      return await api(`/api/ptz/${encodeURIComponent(id)}/${path}`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: body ? JSON.stringify(body) : undefined
+      });
+    } catch (error) {
+      const message = String(error.message || 'Camera control failed.');
+      if (/camera not found|stream not found/i.test(message)) {
+        await refreshPtz();
+        throw new Error('Camera control is unavailable because the current camera stream is no longer registered. Refresh the page after saving settings.');
+      }
+      throw error;
     }
   }
 
-  function enhanceCard(card) {
+  function enhance(card) {
     const img = card.querySelector('.cam-body img');
     const body = card.querySelector('.cam-body');
-    if (!img || !body || body.dataset.viewerEnhanced) return;
-    const idMatch = img.getAttribute('src')?.match(/\/live\/([^/.]+)\.mjpg/);
-    const id = idMatch ? decodeURIComponent(idMatch[1]) : '';
+    if (!img || !body || body.dataset.liveViewEnhanced) return;
+    const id = getId(img);
     if (!id) return;
 
-    body.dataset.viewerEnhanced = '1';
-    body.classList.add('viewer-ready');
-    const viewer = stateFor(id);
-    viewer.body = body;
-    viewer.img = img;
-
+    body.dataset.liveViewEnhanced = '1';
+    body.classList.add('live-view');
+    const viewer = stateFor(id, body, img);
     img.draggable = false;
-    let dragging = false;
-    let lastX = 0;
-    let lastY = 0;
 
-    body.addEventListener('wheel', (event) => {
-      event.preventDefault();
+    body.addEventListener('wheel', (e) => {
+      e.preventDefault();
       const rect = body.getBoundingClientRect();
-      const anchorX = event.clientX - rect.left - rect.width / 2;
-      const anchorY = event.clientY - rect.top - rect.height / 2;
-      setZoom(viewer, viewer.zoom + (event.deltaY < 0 ? 0.25 : -0.25), anchorX, anchorY);
-    }, { passive: false });
+      zoom(viewer, viewer.zoom + (e.deltaY < 0 ? .25 : -.25), e.clientX - rect.left - rect.width/2, e.clientY - rect.top - rect.height/2);
+    }, { passive:false });
 
-    body.addEventListener('pointerdown', (event) => {
-      if (viewer.zoom <= 1 || event.target.closest('button')) return;
-      dragging = true;
-      lastX = event.clientX;
-      lastY = event.clientY;
+    const endDrag = (e) => {
+      viewer.dragging = false;
+      img.classList.remove('dragging');
+      try { body.releasePointerCapture?.(e.pointerId); } catch {}
+    };
+    body.addEventListener('pointerdown', (e) => {
+      if (viewer.zoom <= 1 || e.target.closest('button')) return;
+      viewer.dragging = true;
+      viewer.lastX = e.clientX;
+      viewer.lastY = e.clientY;
       img.classList.add('dragging');
-      body.setPointerCapture?.(event.pointerId);
+      body.setPointerCapture?.(e.pointerId);
     });
-    body.addEventListener('pointermove', (event) => {
-      if (!dragging) return;
-      viewer.x += event.clientX - lastX;
-      viewer.y += event.clientY - lastY;
-      lastX = event.clientX;
-      lastY = event.clientY;
+    body.addEventListener('pointermove', (e) => {
+      if (!viewer.dragging) return;
+      viewer.x += e.clientX - viewer.lastX;
+      viewer.y += e.clientY - viewer.lastY;
+      viewer.lastX = e.clientX;
+      viewer.lastY = e.clientY;
       apply(viewer);
     });
-    const endDrag = (event) => {
-      dragging = false;
-      img.classList.remove('dragging');
-      try { body.releasePointerCapture?.(event.pointerId); } catch {}
-    };
     body.addEventListener('pointerup', endDrag);
     body.addEventListener('pointercancel', endDrag);
 
-    img.addEventListener('error', () => {
-      if (viewer.retryTimer) return;
-      viewer.retryTimer = setTimeout(() => {
-        viewer.retryTimer = null;
-        const src = img.src.split('#')[0];
-        img.src = `${src}#${Date.now()}`;
-      }, 1500);
-    });
-
     const toolbar = document.createElement('div');
     toolbar.className = 'viewer-toolbar';
-    toolbar.innerHTML = '<span class="viewer-label">Live controls</span>';
+    const group = document.createElement('div'); group.className = 'viewer-group';
+    const out = document.createElement('button'); out.type='button'; out.className='viewer-btn'; out.textContent='−'; out.title='Digital zoom out';
+    const reset = document.createElement('button'); reset.type='button'; reset.className='viewer-btn primary'; reset.textContent='Reset'; reset.title='Reset digital zoom and pan';
+    const into = document.createElement('button'); into.type='button'; into.className='viewer-btn'; into.textContent='+'; into.title='Digital zoom in';
+    const full = document.createElement('button'); full.type='button'; full.className='viewer-btn'; full.textContent='Fullscreen';
+    const status = document.createElement('span'); status.className='viewer-status'; status.dataset.viewerStatus='1';
+    group.append(out, reset, into, full, status); toolbar.appendChild(group);
 
-    const zoomOut = makeButton('−', 'zoom-out', 'Zoom out');
-    const resetBtn = makeButton('100%', 'reset', 'Reset digital zoom and pan');
-    resetBtn.classList.add('primary');
-    const zoomIn = makeButton('+', 'zoom-in', 'Zoom in');
-    const full = makeButton('Fullscreen', 'fullscreen', 'Open this camera full screen');
-    const status = document.createElement('span');
-    status.className = 'viewer-status';
-    status.dataset.viewerStatus = '1';
-    toolbar.append(zoomOut, resetBtn, zoomIn, full, status);
-
-    if (ptzCapabilities.get(id)) {
-      const pad = document.createElement('div');
-      pad.className = 'viewer-ptz';
-      const moves = [
-        ['↖', -1, 1], ['↑', 0, 1], ['↗', 1, 1],
-        ['←', -1, 0], ['⌂', 0, 0], ['→', 1, 0],
-        ['↙', -1, -1], ['↓', 0, -1], ['↘', 1, -1],
-      ];
-      moves.forEach(([label, pan, tilt]) => {
-        const b = makeButton(label, 'ptz-move');
-        b.dataset.pan = String(pan);
-        b.dataset.tilt = String(tilt);
-        b.title = label === '⌂' ? 'Go to home position' : 'Move camera';
-        pad.appendChild(b);
-      });
+    if (ptzMap.get(id)) {
+      const pad = document.createElement('div'); pad.className='viewer-pad';
+      const moves=[['↖',-1,1],['↑',0,1],['↗',1,1],['←',-1,0],['⌂',0,0],['→',1,0],['↙',-1,-1],['↓',0,-1],['↘',1,-1]];
+      for (const [label,pan,tilt] of moves) {
+        const b=document.createElement('button'); b.type='button'; b.className='viewer-btn'; b.textContent=label; b.dataset.ptz='1'; b.dataset.pan=pan; b.dataset.tilt=tilt; b.title=label==='⌂'?'Home':'Move camera'; pad.appendChild(b);
+      }
       toolbar.appendChild(pad);
-
-      const zoom = document.createElement('div');
-      zoom.className = 'viewer-zoom';
-      zoom.append(makeButton('Cam −', 'ptz-zoom-out', 'Optical zoom out'), makeButton('Stop', 'ptz-stop', 'Stop camera movement'), makeButton('Cam +', 'ptz-zoom-in', 'Optical zoom in'));
-      toolbar.appendChild(zoom);
+      const optical=document.createElement('div'); optical.className='viewer-group';
+      const zOut=document.createElement('button'); zOut.type='button'; zOut.className='viewer-btn'; zOut.textContent='Cam −'; zOut.dataset.optical='-1';
+      const stop=document.createElement('button'); stop.type='button'; stop.className='viewer-btn'; stop.textContent='Stop'; stop.dataset.stopPtz='1';
+      const zIn=document.createElement('button'); zIn.type='button'; zIn.className='viewer-btn'; zIn.textContent='Cam +'; zIn.dataset.optical='1';
+      optical.append(zOut,stop,zIn); toolbar.appendChild(optical);
     }
 
-    const help = document.createElement('div');
-    help.className = 'viewer-help';
-    help.textContent = ptzCapabilities.get(id)
-      ? 'Mouse wheel or +/− = digital zoom · drag the image = digital pan · arrows = camera PTZ.'
-      : 'Mouse wheel or +/− = digital zoom · drag the image = digital pan. Enable ONVIF PTZ for physical camera movement.';
-    toolbar.appendChild(help);
-
+    const note=document.createElement('div'); note.className='viewer-note';
+    note.textContent=ptzMap.get(id) ? 'Mouse wheel / +− = digital zoom · drag = digital pan · arrows = physical PTZ.' : 'Mouse wheel / +− = digital zoom · drag = digital pan. Enable ONVIF PTZ for physical movement.';
+    toolbar.appendChild(note);
     card.appendChild(toolbar);
 
-    toolbar.addEventListener('click', async (event) => {
-      const button = event.target.closest('[data-viewer-action]');
-      if (!button) return;
-      const action = button.dataset.viewerAction;
+    toolbar.addEventListener('click', async (e) => {
+      const b=e.target.closest('button'); if(!b) return;
       try {
-        if (action === 'zoom-in') setZoom(viewer, viewer.zoom + 0.25);
-        else if (action === 'zoom-out') setZoom(viewer, viewer.zoom - 0.25);
-        else if (action === 'reset') reset(viewer);
-        else if (action === 'fullscreen') await body.requestFullscreen?.();
-        else if (action === 'ptz-move') {
-          if (button.textContent === '⌂') await ptzHome(id);
-          else await physicalPtz(id, Number(button.dataset.pan), Number(button.dataset.tilt), 0);
-        } else if (action === 'ptz-zoom-in') await physicalPtz(id, 0, 0, 1);
-        else if (action === 'ptz-zoom-out') await physicalPtz(id, 0, 0, -1);
-        else if (action === 'ptz-stop') {
-          if (ptzCapabilities.get(id)) await api(`/api/ptz/${encodeURIComponent(id)}/stop`, { method: 'POST' });
-          else showToast('Camera PTZ is disabled. Enable ONVIF PTZ in Settings → Cameras.', 'error');
-        }
-      } catch (error) {
-        showToast(error.message || 'Camera control failed.', 'error');
-      }
+        if(b===out) zoom(viewer,viewer.zoom-.25);
+        else if(b===into) zoom(viewer,viewer.zoom+.25);
+        else if(b===reset) zoom(viewer,1);
+        else if(b===full) await body.requestFullscreen?.();
+        else if(b.dataset.ptz){
+          if(b.textContent==='⌂') await apiControl(id,'home');
+          else await apiControl(id,'move',{pan:Number(b.dataset.pan),tilt:Number(b.dataset.tilt),zoom:0,seconds:.3});
+        } else if(b.dataset.optical) await apiControl(id,'move',{pan:0,tilt:0,zoom:Number(b.dataset.optical),seconds:.3});
+        else if(b.dataset.stopPtz) await apiControl(id,'stop');
+      } catch (error) { showToast(error.message || 'Camera control failed.','error'); }
     });
 
     apply(viewer);
   }
 
   async function refresh() {
-    await loadPtzCapabilities();
-    grid.querySelectorAll('.cam').forEach(enhanceCard);
+    await refreshPtz();
+    grid.querySelectorAll('.cam').forEach(enhance);
   }
 
-  new MutationObserver(() => {
-    grid.querySelectorAll('.cam').forEach(enhanceCard);
-  }).observe(grid, { childList: true, subtree: true });
-
+  new MutationObserver(() => refresh()).observe(grid, { childList:true, subtree:true });
+  window.addEventListener('resize', () => viewers.forEach(apply));
+  setInterval(refresh, 5000);
   refresh();
 })();
