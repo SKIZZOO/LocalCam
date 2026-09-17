@@ -46,6 +46,10 @@ async function connectWebRTC(stream, video, fallback, quality, generation) {
   webrtcPeers.set(peerId, pc);
   pc.addTransceiver('video', { direction: 'recvonly' });
   pc.addTransceiver('audio', { direction: 'recvonly' });
+  video.addEventListener('playing', () => {
+    video.style.display = '';
+    fallback.style.display = 'none';
+  }, { once: true });
   pc.addEventListener('track', (event) => {
     const remote = event.streams?.[0];
     if (remote) {
@@ -61,6 +65,8 @@ async function connectWebRTC(stream, video, fallback, quality, generation) {
       if (video.srcObject) video.srcObject = null;
       video.style.display = 'none';
       fallback.style.display = '';
+      const transport = video.closest('.cam-body')?.querySelector('[data-live-transport]');
+      if (transport) transport.textContent = 'MJPEG fallback';
       webrtcPeers.delete(peerId);
     }
   });
@@ -89,8 +95,8 @@ async function connectWebRTC(stream, video, fallback, quality, generation) {
       webrtcPeers.delete(peerId);
       return false;
     }
-    video.style.display = '';
-    fallback.style.display = 'none';
+    video.style.display = 'none';
+    fallback.style.display = '';
     video.muted = true;
     video.autoplay = true;
     video.playsInline = true;
@@ -105,6 +111,8 @@ async function connectWebRTC(stream, video, fallback, quality, generation) {
     video.srcObject = null;
     video.style.display = 'none';
     fallback.style.display = '';
+    const transport = video.closest('.cam-body')?.querySelector('[data-live-transport]');
+    if (transport) transport.textContent = 'MJPEG fallback';
     if (generation === webrtcGeneration && !/WebRTC is unavailable/i.test(String(error.message || ''))) {
       console.warn(`LocalCam WebRTC failed for ${stream.name}:`, error);
     }
