@@ -30,7 +30,6 @@ if defined SYSTEM_PY goto check_python_version
 where python >nul 2>&1
 if not errorlevel 1 set "SYSTEM_PY=python"
 if defined SYSTEM_PY goto check_python_version
-
 goto python_missing
 
 :check_python_version
@@ -49,13 +48,10 @@ if not exist "%ROOT%web\setup.html" goto web_missing
 
 echo Web UI files: OK
 echo.
-
 if not exist "%VENV%" goto create_env
-
 echo LocalCam Python environment found.
 "%VENV%" -m pip --version >nul 2>&1
 if not errorlevel 1 goto check_modules
-
 echo.
 echo The existing LocalCam Python environment is incomplete.
 echo.
@@ -63,7 +59,6 @@ choice /C YN /N /M "Repair the LocalCam Python environment now? [Y/N] "
 if errorlevel 2 goto cancelled
 rmdir /s /q "%ROOT%.venv" >nul 2>&1
 if exist "%VENV%" goto env_remove_failed
-
 goto create_env
 
 :create_env
@@ -73,13 +68,11 @@ echo Your existing system Python is fine - LocalCam uses a separate .venv, so it
 echo.
 choice /C YN /N /M "Create the LocalCam environment and install dependencies? [Y/N] "
 if errorlevel 2 goto cancelled
-
 echo.
 echo Creating LocalCam virtual environment...
 %SYSTEM_PY% -m venv "%ROOT%.venv"
 if errorlevel 1 goto venv_failed
 if not exist "%VENV%" goto venv_failed
-
 echo.
 echo Installing Python packages from requirements.txt...
 "%VENV%" -m ensurepip --upgrade
@@ -88,7 +81,6 @@ if errorlevel 1 goto pip_failed
 if errorlevel 1 goto pip_failed
 "%VENV%" -m pip install -r "%ROOT%requirements.txt"
 if errorlevel 1 goto pip_failed
-
 goto check_modules
 
 :check_modules
@@ -100,7 +92,6 @@ if errorlevel 1 set "NEED_INSTALL=1"
 "%VENV%" -c "import onvif" >nul 2>&1
 if errorlevel 1 set "NEED_INSTALL=1"
 if "%NEED_INSTALL%"=="0" goto config_check
-
 echo.
 echo One or more LocalCam Python components are missing.
 echo.
@@ -108,7 +99,6 @@ choice /C YN /N /M "Install the missing components now? [Y/N] "
 if errorlevel 2 goto cancelled
 "%VENV%" -m pip install -r "%ROOT%requirements.txt"
 if errorlevel 1 goto pip_failed
-
 goto config_check
 
 :config_check
@@ -116,13 +106,11 @@ if exist "%ROOT%config.json" goto ffmpeg_check
 copy /y "%ROOT%config.example.json" "%ROOT%config.json" >nul 2>&1
 if errorlevel 1 goto config_failed
 echo Created LocalCam configuration.
-
 goto ffmpeg_check
 
 :ffmpeg_check
 where ffmpeg >nul 2>&1
 if not errorlevel 1 goto start_localcam
-
 echo.
 echo [NOTICE] FFmpeg is not installed or is not on PATH.
 echo LocalCam can open, but camera preview and recording need FFmpeg.
@@ -134,7 +122,6 @@ winget install --id Gyan.FFmpeg.Shared --exact --accept-package-agreements --acc
 if errorlevel 1 echo FFmpeg installation was not completed.
 echo.
 echo Continuing with LocalCam startup.
-
 goto start_localcam
 
 :start_localcam
@@ -150,7 +137,6 @@ echo.
 echo Starting LocalCam...
 echo Keep this window open while LocalCam is running.
 echo.
-
 if not exist "%VENV%" goto venv_failed
 "%VENV%" "%ROOT%app.py"
 set "APP_EXIT=%ERRORLEVEL%"
@@ -160,6 +146,7 @@ echo LocalCam stopped with exit code %APP_EXIT%.
 goto failed
 
 :normal_stop
+set "FINAL_EXIT=0"
 echo LocalCam has stopped normally.
 goto stop_with_pause
 
@@ -177,12 +164,10 @@ where winget >nul 2>&1
 if errorlevel 1 goto python_manual
 choice /C YN /N /M "Install Python 3.13 with Windows winget now? [Y/N] "
 if errorlevel 2 goto cancelled
-
 echo.
 echo Installing Python 3.13...
 winget install --id Python.Python.3.13 --exact --accept-package-agreements --accept-source-agreements
 if errorlevel 1 goto python_install_failed
-
 echo.
 echo Python installation completed.
 echo Close this window and run run.bat again so Windows refreshes PATH.
@@ -202,12 +187,10 @@ where winget >nul 2>&1
 if errorlevel 1 goto python_manual
 choice /C YN /N /M "Install Python 3.13 with Windows winget now? [Y/N] "
 if errorlevel 2 goto cancelled
-
 echo.
 echo Installing Python 3.13...
 winget install --id Python.Python.3.13 --exact --accept-package-agreements --accept-source-agreements
 if errorlevel 1 goto python_install_failed
-
 echo.
 echo Python installation completed.
 echo Close this window and run run.bat again so Windows refreshes PATH.
@@ -217,70 +200,83 @@ goto stop_with_pause
 echo Windows Package Manager (winget) is not available.
 echo Install Python 3.11 or newer manually from:
 echo https://www.python.org/downloads/windows/
+set "FINAL_EXIT=1"
 goto stop_with_pause
 
 :python_install_failed
 echo.
 echo Python installation did not complete successfully.
 echo Check the winget message above and run run.bat again.
+set "FINAL_EXIT=1"
 goto stop_with_pause
 
 :project_missing
 echo.
 echo app.py was not found. Run run.bat from the LocalCam folder.
-goto failed
+set "FINAL_EXIT=1"
+goto stop_with_pause
 
 :requirements_missing
 echo.
 echo requirements.txt was not found. The project files are incomplete.
-goto failed
+set "FINAL_EXIT=1"
+goto stop_with_pause
 
 :web_missing
 echo.
 echo LocalCam web files are missing.
 echo Re-download the current project from GitHub and run run.bat again.
-goto failed
+set "FINAL_EXIT=1"
+goto stop_with_pause
 
 :config_missing
 echo.
 echo config.example.json was not found.
-goto failed
+set "FINAL_EXIT=1"
+goto stop_with_pause
 
 :config_failed
 echo.
 echo Could not create config.json. Check folder permissions.
-goto failed
+set "FINAL_EXIT=1"
+goto stop_with_pause
 
 :venv_failed
 echo.
 echo Could not create or repair the LocalCam Python environment.
 echo Check that Python has the venv module available and that this folder is writable.
-goto failed
+set "FINAL_EXIT=1"
+goto stop_with_pause
 
 :env_remove_failed
 echo.
 echo The old LocalCam .venv could not be removed.
 echo Close any LocalCam/Python process and run run.bat again.
-goto failed
+set "FINAL_EXIT=1"
+goto stop_with_pause
 
 :pip_failed
 echo.
 echo Python package installation failed.
 echo Review the pip output above.
-goto failed
+set "FINAL_EXIT=1"
+goto stop_with_pause
 
 :cancelled
 echo.
 echo Setup was cancelled. LocalCam was not started.
+set "FINAL_EXIT=1"
 goto stop_with_pause
 
 :failed
 echo.
 echo LocalCam launcher finished with an error.
+set "FINAL_EXIT=1"
 goto stop_with_pause
 
 :stop_with_pause
+if not defined FINAL_EXIT set "FINAL_EXIT=1"
 echo.
-echo LocalCam launcher finished with exit code 1.
+echo LocalCam launcher finished with exit code %FINAL_EXIT%.
 pause
-exit /b 1
+exit /b %FINAL_EXIT%
