@@ -6,11 +6,10 @@ title LocalCam Launcher
 set "ROOT=%~dp0"
 set "VENV=%ROOT%.venv\Scripts\python.exe"
 set "SYSTEM_PY="
-set "UI_VERSION=0.9.0"
 
 rem ================================================================
 rem LocalCam Windows launcher
-rem No CALL-to-label flow is used here so double-click startup is robust.
+rem Simple label flow so double-click startup stays reliable.
 rem ================================================================
 
 cls
@@ -20,112 +19,79 @@ echo              LOCALCAM NVR
 echo ========================================
 echo.
 echo Windows launcher and environment check
-echo.
 echo Project folder: %ROOT%
 echo.
 
-rem --- Find a usable system Python --------------------------------
+:find_python
+set "SYSTEM_PY="
 where py >nul 2>&1
 if not errorlevel 1 set "SYSTEM_PY=py -3"
-if not defined SYSTEM_PY (
-    where python >nul 2>&1
-    if not errorlevel 1 set "SYSTEM_PY=python"
-)
-if defined SYSTEM_PY goto PYTHON_FOUND
+if defined SYSTEM_PY goto check_python_version
+where python >nul 2>&1
+if not errorlevel 1 set "SYSTEM_PY=python"
+if defined SYSTEM_PY goto check_python_version
 
-echo Python 3.11 or newer was not found on this computer.
-echo LocalCam needs Python to create its private environment.
-echo.
-where winget >nul 2>&1
-if errorlevel 1 goto PYTHON_MANUAL
-choice /C YN /N /M "Install Python 3.13 with Windows winget now? [Y/N] "
-if errorlevel 2 goto CANCELLED
+goto python_missing
 
-echo.
-echo Installing Python 3.13...
-winget install --id Python.Python.3.13 --exact --accept-package-agreements --accept-source-agreements
-if errorlevel 1 goto PYTHON_INSTALL_FAILED
-
-echo.
-echo Python installation completed.
-echo Close this window and run run.bat again so Windows refreshes PATH.
-goto STOP_WITH_PAUSE
-
-:PYTHON_FOUND
+:check_python_version
 %SYSTEM_PY% -c "import sys; print('Detected Python', '.'.join(map(str,sys.version_info[:3]))); raise SystemExit(0 if sys.version_info >= (3,11) else 1)"
-if not errorlevel 1 goto PROJECT_CHECKS
+if not errorlevel 1 goto project_checks
+goto python_old
 
-echo.
-echo Python 3.11 or newer is required.
-echo Your detected Python installation is older than 3.11.
-echo LocalCam will use a separate .venv and will not replace other project environments.
-echo.
-where winget >nul 2>&1
-if errorlevel 1 goto PYTHON_MANUAL
-choice /C YN /N /M "Install Python 3.13 with Windows winget now? [Y/N] "
-if errorlevel 2 goto CANCELLED
+:project_checks
+if not exist "%ROOT%app.py" goto project_missing
+if not exist "%ROOT%requirements.txt" goto requirements_missing
+if not exist "%ROOT%config.example.json" goto config_missing
+if not exist "%ROOT%web\assets\app.css" goto web_missing
+if not exist "%ROOT%web\assets\app.js" goto web_missing
+if not exist "%ROOT%web\login.html" goto web_missing
+if not exist "%ROOT%web\setup.html" goto web_missing
 
-echo.
-echo Installing Python 3.13...
-winget install --id Python.Python.3.13 --exact --accept-package-agreements --accept-source-agreements
-if errorlevel 1 goto PYTHON_INSTALL_FAILED
-
-echo.
-echo Python installation completed.
-echo Close this window and run run.bat again so Windows refreshes PATH.
-goto STOP_WITH_PAUSE
-
-:PROJECT_CHECKS
-if not exist "%ROOT%app.py" goto PROJECT_MISSING
-if not exist "%ROOT%requirements.txt" goto REQUIREMENTS_MISSING
-if not exist "%ROOT%config.example.json" goto CONFIG_MISSING
-if not exist "%ROOT%web\assets\app.css" goto WEB_MISSING
-if not exist "%ROOT%web\assets\app.js" goto WEB_MISSING
-if not exist "%ROOT%web\login.html" goto WEB_MISSING
-if not exist "%ROOT%web\setup.html" goto WEB_MISSING
-
-rem Do not hard-fail on an exact UI cache version. The actual asset files are what matter.
 echo Web UI files: OK
-
 echo.
-if not exist "%VENV%" goto CREATE_ENV
+
+if not exist "%VENV%" goto create_env
 
 echo LocalCam Python environment found.
 "%VENV%" -m pip --version >nul 2>&1
-if not errorlevel 1 goto CHECK_MODULES
+if not errorlevel 1 goto check_modules
 
+echo.
 echo The existing LocalCam Python environment is incomplete.
+echo.
 choice /C YN /N /M "Repair the LocalCam Python environment now? [Y/N] "
-if errorlevel 2 goto CANCELLED
+if errorlevel 2 goto cancelled
 rmdir /s /q "%ROOT%.venv" >nul 2>&1
-if exist "%VENV%" goto ENV_REMOVE_FAILED
+if exist "%VENV%" goto env_remove_failed
 
-:CREATE_ENV
+goto create_env
+
+:create_env
 echo.
 echo No usable LocalCam Python environment was found.
 echo Your existing system Python is fine - LocalCam uses a separate .venv, so it will not interfere with Redbot or other projects.
 echo.
 choice /C YN /N /M "Create the LocalCam environment and install dependencies? [Y/N] "
-if errorlevel 2 goto CANCELLED
+if errorlevel 2 goto cancelled
 
 echo.
 echo Creating LocalCam virtual environment...
 %SYSTEM_PY% -m venv "%ROOT%.venv"
-if errorlevel 1 goto VENV_FAILED
-if not exist "%VENV%" goto VENV_FAILED
+if errorlevel 1 goto venv_failed
+if not exist "%VENV%" goto venv_failed
 
 echo.
 echo Installing Python packages from requirements.txt...
 "%VENV%" -m ensurepip --upgrade
-if errorlevel 1 goto PIP_FAILED
+if errorlevel 1 goto pip_failed
 "%VENV%" -m pip install --upgrade pip
-if errorlevel 1 goto PIP_FAILED
+if errorlevel 1 goto pip_failed
 "%VENV%" -m pip install -r "%ROOT%requirements.txt"
-if errorlevel 1 goto PIP_FAILED
+if errorlevel 1 goto pip_failed
 
-goto CHECK_MODULES
+goto check_modules
 
-:CHECK_MODULES
+:check_modules
 set "NEED_INSTALL=0"
 "%VENV%" -c "import PIL" >nul 2>&1
 if errorlevel 1 set "NEED_INSTALL=1"
@@ -133,21 +99,188 @@ if errorlevel 1 set "NEED_INSTALL=1"
 if errorlevel 1 set "NEED_INSTALL=1"
 "%VENV%" -c "import onvif" >nul 2>&1
 if errorlevel 1 set "NEED_INSTALL=1"
-if "%NEED_INSTALL%"=="0" goto CONFIG_CHECK
+if "%NEED_INSTALL%"=="0" goto config_check
 
 echo.
 echo One or more LocalCam Python components are missing.
+echo.
 choice /C YN /N /M "Install the missing components now? [Y/N] "
-if errorlevel 2 goto CANCELLED
+if errorlevel 2 goto cancelled
 "%VENV%" -m pip install -r "%ROOT%requirements.txt"
-if errorlevel 1 goto PIP_FAILED
+if errorlevel 1 goto pip_failed
 
-goto CONFIG_CHECK
+goto config_check
 
-:CONFIG_CHECK
-if exist "%ROOT%config.json" goto FFMPEG_CHECK
+:config_check
+if exist "%ROOT%config.json" goto ffmpeg_check
 copy /y "%ROOT%config.example.json" "%ROOT%config.json" >nul 2>&1
-if errorlevel 1 goto CONFIG_FAILED
+if errorlevel 1 goto config_failed
 echo Created LocalCam configuration.
 
-a:FFMPEG_CHECK
+goto ffmpeg_check
+
+:ffmpeg_check
+where ffmpeg >nul 2>&1
+if not errorlevel 1 goto start_localcam
+
+echo.
+echo [NOTICE] FFmpeg is not installed or is not on PATH.
+echo LocalCam can open, but camera preview and recording need FFmpeg.
+where winget >nul 2>&1
+if errorlevel 1 goto start_localcam
+choice /C YN /N /M "Install FFmpeg with Windows winget now? [Y/N] "
+if errorlevel 2 goto start_localcam
+winget install --id Gyan.FFmpeg.Shared --exact --accept-package-agreements --accept-source-agreements
+if errorlevel 1 echo FFmpeg installation was not completed.
+echo.
+echo Continuing with LocalCam startup.
+
+goto start_localcam
+
+:start_localcam
+cls
+echo.
+echo ========================================
+echo              LOCALCAM NVR
+echo ========================================
+echo.
+echo Windows launcher and environment check
+echo Project folder: %ROOT%
+echo.
+echo Starting LocalCam...
+echo Keep this window open while LocalCam is running.
+echo.
+
+if not exist "%VENV%" goto venv_failed
+"%VENV%" "%ROOT%app.py"
+set "APP_EXIT=%ERRORLEVEL%"
+echo.
+if "%APP_EXIT%"=="0" goto normal_stop
+echo LocalCam stopped with exit code %APP_EXIT%.
+goto failed
+
+:normal_stop
+echo LocalCam has stopped normally.
+goto stop_with_pause
+
+:python_missing
+cls
+echo.
+echo ========================================
+echo              LOCALCAM NVR
+echo ========================================
+echo.
+echo Python 3.11 or newer was not found on this computer.
+echo LocalCam needs Python to create its private environment.
+echo.
+where winget >nul 2>&1
+if errorlevel 1 goto python_manual
+choice /C YN /N /M "Install Python 3.13 with Windows winget now? [Y/N] "
+if errorlevel 2 goto cancelled
+
+echo.
+echo Installing Python 3.13...
+winget install --id Python.Python.3.13 --exact --accept-package-agreements --accept-source-agreements
+if errorlevel 1 goto python_install_failed
+
+echo.
+echo Python installation completed.
+echo Close this window and run run.bat again so Windows refreshes PATH.
+goto stop_with_pause
+
+:python_old
+cls
+echo.
+echo ========================================
+echo              LOCALCAM NVR
+echo ========================================
+echo.
+echo Python 3.11 or newer is required.
+echo The detected Python installation is older than 3.11.
+echo.
+where winget >nul 2>&1
+if errorlevel 1 goto python_manual
+choice /C YN /N /M "Install Python 3.13 with Windows winget now? [Y/N] "
+if errorlevel 2 goto cancelled
+
+echo.
+echo Installing Python 3.13...
+winget install --id Python.Python.3.13 --exact --accept-package-agreements --accept-source-agreements
+if errorlevel 1 goto python_install_failed
+
+echo.
+echo Python installation completed.
+echo Close this window and run run.bat again so Windows refreshes PATH.
+goto stop_with_pause
+
+:python_manual
+echo Windows Package Manager (winget) is not available.
+echo Install Python 3.11 or newer manually from:
+echo https://www.python.org/downloads/windows/
+goto stop_with_pause
+
+:python_install_failed
+echo.
+echo Python installation did not complete successfully.
+echo Check the winget message above and run run.bat again.
+goto stop_with_pause
+
+:project_missing
+echo.
+echo app.py was not found. Run run.bat from the LocalCam folder.
+goto failed
+
+:requirements_missing
+echo.
+echo requirements.txt was not found. The project files are incomplete.
+goto failed
+
+:web_missing
+echo.
+echo LocalCam web files are missing.
+echo Re-download the current project from GitHub and run run.bat again.
+goto failed
+
+:config_missing
+echo.
+echo config.example.json was not found.
+goto failed
+
+:config_failed
+echo.
+echo Could not create config.json. Check folder permissions.
+goto failed
+
+:venv_failed
+echo.
+echo Could not create or repair the LocalCam Python environment.
+echo Check that Python has the venv module available and that this folder is writable.
+goto failed
+
+:env_remove_failed
+echo.
+echo The old LocalCam .venv could not be removed.
+echo Close any LocalCam/Python process and run run.bat again.
+goto failed
+
+:pip_failed
+echo.
+echo Python package installation failed.
+echo Review the pip output above.
+goto failed
+
+:cancelled
+echo.
+echo Setup was cancelled. LocalCam was not started.
+goto stop_with_pause
+
+:failed
+echo.
+echo LocalCam launcher finished with an error.
+goto stop_with_pause
+
+:stop_with_pause
+echo.
+echo LocalCam launcher finished with exit code 1.
+pause
+exit /b 1
