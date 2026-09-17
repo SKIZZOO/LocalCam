@@ -96,8 +96,6 @@ class Recorder:
                 RTSP_AUTO_TRANSPORT,
                 '-user_agent',
                 RTSP_USER_AGENT,
-                '-allowed_media_types',
-                'video',
                 '-timeout',
                 '15000000',
                 '-i',
