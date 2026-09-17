@@ -32,7 +32,7 @@ echo.
 
 if not exist "%VENV%" (
   echo No LocalCam Python environment was found.
-  echo Your existing system Python is fine - LocalCam uses a separate .venv so it does not interfere with Redbot or other projects.
+  echo Your existing system Python is fine - LocalCam uses a separate .venv, so it will not interfere with Redbot or other projects.
   echo.
   choice /C YN /N /M "Create the LocalCam environment and install dependencies? [Y/N] "
   if errorlevel 2 goto :cancelled
@@ -51,7 +51,7 @@ if not exist "%VENV%" (
     if errorlevel 1 goto :failed
   ) else (
     set "MISSING="
-    for /f "delims=" %%M in ('"%VENV%" -c "import importlib.util; mods=['PIL','psutil','onvif','win32serviceutil']; print(','.join(m for m in mods if importlib.util.find_spec(m) is None))"') do set "MISSING=%%M"
+    for /f "delims=" %%M in ('"%VENV%" -c "import importlib.util; mods=['PIL','psutil','onvif']; print(','.join(m for m in mods if importlib.util.find_spec(m) is None))"') do set "MISSING=%%M"
     if defined MISSING (
       echo Missing LocalCam components: !MISSING!
       echo.
@@ -99,7 +99,6 @@ echo Keep this window open while LocalCam is running.
 echo.
 "%VENV%" "%ROOT%app.py"
 set "EXIT_CODE=%ERRORLEVEL%"
-
 echo.
 if not "%EXIT_CODE%"=="0" (
   echo LocalCam stopped with exit code %EXIT_CODE%.
@@ -114,18 +113,19 @@ exit /b 0
 :install
 if not exist "%VENV%" (
   echo.
-  echo Creating .venv...
+  echo Creating LocalCam virtual environment...
   %SYSTEM_PY% -m venv "%ROOT%.venv"
   if errorlevel 1 (
     echo Could not create the LocalCam virtual environment.
-    echo Make sure Python was installed with the standard library and venv support.
+    echo Make sure the installed Python includes venv support.
     exit /b 1
   )
 )
 
 echo.
 echo Installing Python packages from requirements.txt...
-"%VENV%" -m ensurepip --upgrade >nul 2>&1
+"%VENV%" -m ensurepip --upgrade
+if errorlevel 1 exit /b 1
 "%VENV%" -m pip install --upgrade pip
 if errorlevel 1 exit /b 1
 "%VENV%" -m pip install -r "%ROOT%requirements.txt"
@@ -150,7 +150,7 @@ exit /b 1
 
 :project_missing
 echo.
-echo app.py was not found. Run run.bat from the LocalCam project folder.
+echo app.py was not found. Run run.bat from the LocalCam folder.
 pause
 exit /b 1
 
