@@ -113,16 +113,24 @@ where ffmpeg >nul 2>&1
 if not errorlevel 1 goto start_localcam
 echo.
 echo [NOTICE] FFmpeg is not installed or is not on PATH.
-echo LocalCam can open, but camera preview and recording need FFmpeg.
+echo LocalCam camera preview and recording need FFmpeg.
 where winget >nul 2>&1
 if errorlevel 1 goto start_localcam
 choice /C YN /N /M "Install FFmpeg with Windows winget now? [Y/N] "
 if errorlevel 2 goto start_localcam
-winget install --id Gyan.FFmpeg.Shared --exact --accept-package-agreements --accept-source-agreements
-if errorlevel 1 echo FFmpeg installation was not completed.
 echo.
-echo Continuing with LocalCam startup.
-goto start_localcam
+echo Installing FFmpeg...
+winget install --id Gyan.FFmpeg.Shared --exact --accept-package-agreements --accept-source-agreements
+if errorlevel 1 goto ffmpeg_install_failed
+echo.
+echo FFmpeg installation completed. Refreshing the Windows PATH for this launcher...
+for /f "delims=" %%P in ('powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')" 2^>nul') do set "PATH=%%P"
+where ffmpeg >nul 2>&1
+if not errorlevel 1 goto start_localcam
+echo.
+echo FFmpeg was installed, but this Windows session still cannot find ffmpeg.exe.
+echo Close this window and run run.bat again so Windows reloads the updated PATH.
+goto stop_with_pause
 
 :start_localcam
 cls
@@ -206,6 +214,13 @@ goto stop_with_pause
 :python_install_failed
 echo.
 echo Python installation did not complete successfully.
+echo Check the winget message above and run run.bat again.
+set "FINAL_EXIT=1"
+goto stop_with_pause
+
+:ffmpeg_install_failed
+echo.
+echo FFmpeg installation did not complete successfully.
 echo Check the winget message above and run run.bat again.
 set "FINAL_EXIT=1"
 goto stop_with_pause
