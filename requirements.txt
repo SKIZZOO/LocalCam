@@ -1,3 +1,6 @@
 Pillow>=10.4.0
 PyInstaller>=6.10.0
-pytest>=8.3.0
+psutil>=6.0.0
+pywin32>=306; platform_system == "Windows"
+onvif-zeep>=0.2.12
+pytest>=8.0.0
