@@ -5,6 +5,9 @@ from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 
+RTSP_AUTO_TRANSPORT = 'tcp,udp'
+
+
 def with_credentials(url: str, username: str, password: str) -> str:
     """Return an RTSP URL with safely URL-encoded credentials."""
     parsed = urlsplit(url)
@@ -27,7 +30,12 @@ def test_rtsp(
     password: str,
     timeout_seconds: int = 6,
 ) -> dict[str, Any]:
-    """Probe an RTSP stream without writing media to disk."""
+    """Probe an RTSP stream without writing media to disk.
+
+    Cameras vary in whether they accept RTP over TCP or UDP. FFmpeg supports
+    supplying multiple transports and will try them one at a time when one
+    transport setup fails.
+    """
     target = with_credentials(url, username, password)
     cmd = [
         ffmpeg_path,
@@ -35,7 +43,7 @@ def test_rtsp(
         '-loglevel',
         'error',
         '-rtsp_transport',
-        'tcp',
+        RTSP_AUTO_TRANSPORT,
         '-rw_timeout',
         str(timeout_seconds * 1_000_000),
         '-i',
@@ -60,4 +68,9 @@ def test_rtsp(
         return {'ok': False, 'error': 'FFmpeg executable not found'}
     except subprocess.TimeoutExpired:
         return {'ok': False, 'error': 'RTSP probe timed out'}
-    return {'ok': proc.returncode == 0, 'error': proc.stderr.strip() if proc.returncode else ''}
+    error = proc.stderr.strip() if proc.returncode else ''
+    return {
+        'ok': proc.returncode == 0,
+        'error': error,
+        'transport': 'auto (TCP, then UDP)',
+    }
