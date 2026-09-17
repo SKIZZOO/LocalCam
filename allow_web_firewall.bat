@@ -1,3 +1,3 @@
 @echo off
-netsh advfirewall firewall add rule name="LocalCam 8765 LAN" dir=in action=allow protocol=TCP localport=8765 profile=private
+netsh advfirewall firewall add rule name="LocalCam Web 8765" dir=in action=allow protocol=TCP localport=8765 profile=private
 pause
