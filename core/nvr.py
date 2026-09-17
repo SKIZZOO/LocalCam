@@ -18,7 +18,7 @@ from core.db import EventStore
 from core.motion import MotionDetector
 from core.ptz import PTZController
 from core.recorder import Recorder
-from core.rtsp import with_credentials
+from core.rtsp import RTSP_AUTO_TRANSPORT, with_credentials
 
 try:
     import psutil
@@ -56,7 +56,7 @@ def lan_ip() -> str:
 class PreviewWorker:
     def __init__(self, ffmpeg, url, username, password, width, fps, on_frame):
         self.cmd = [
-            ffmpeg, '-hide_banner', '-loglevel', 'error', '-rtsp_transport', 'tcp',
+            ffmpeg, '-hide_banner', '-loglevel', 'error', '-rtsp_transport', RTSP_AUTO_TRANSPORT,
             '-rw_timeout', '15000000', '-i', with_credentials(url, username, password),
             '-an', '-vf', f'scale={width}:-2,fps={fps}', '-q:v', '5', '-f', 'mjpeg', 'pipe:1'
         ]
@@ -558,33 +558,13 @@ class LocalCamServer:
                 p = self.base_dir / name
                 if p.exists():
                     z.writestr(name, p.read_bytes())
-            z.writestr('manifest.json', json.dumps({
-                'format': 1, 'app': 'LocalCam', 'version': APP_VERSION,
-                'created_at': datetime.now().isoformat(timespec='seconds')
-            }, indent=2))
-        return out.getvalue()
+        out.seek(0)
+        return out.read()
 
     def restore(self, raw):
-        if len(raw) > 50 * 1024 * 1024:
-            raise ValueError('Backup is too large.')
         with zipfile.ZipFile(io.BytesIO(raw)) as z:
             names = set(z.namelist())
-            if 'config.json' not in names or not names.issubset({'config.json', 'localcam.sqlite3', 'manifest.json'}):
-                raise ValueError('Invalid LocalCam backup archive.')
-            cfg = json.loads(z.read('config.json').decode('utf-8'))
-            if not isinstance(cfg, dict):
-                raise ValueError('Invalid configuration.')
-            for s in self.streams.values():
-                s.stop()
-            self.streams.clear()
-            (self.base_dir / 'config.json').write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding='utf-8')
+            if 'config.json' in names:
+                (self.base_dir / 'config.json').write_bytes(z.read('config.json'))
             if 'localcam.sqlite3' in names:
-                db = self.base_dir / 'localcam.sqlite3'
-                try:
-                    db.unlink()
-                except FileNotFoundError:
-                    pass
-                db.write_bytes(z.read('localcam.sqlite3'))
-            self.store = EventStore(self.base_dir / 'localcam.sqlite3')
-            self.sessions.clear()
-            self.rebuild_streams()
+                (self.base_dir / 'localcam.sqlite3').write_bytes(z.read('localcam.sqlite3'))
