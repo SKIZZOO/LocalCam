@@ -242,8 +242,12 @@ async function loadRecordings() {
   const rows = await api(`/api/recordings?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}&q=${encodeURIComponent(query)}`);
   $('archiveCount').textContent = `${rows.length} segments`;
   $('recordingsList').innerHTML = rows.length ? rows.map((row) => `
-    <div class="row">
-      <div><b>${esc(row.camera)}</b><small>${esc(row.time)} · ${esc(row.name)} · ${esc(row.size_human)}</small></div>
+    <div class="row archive-row">
+      <div class="archive-main">
+        <b>${esc(row.camera)}</b>
+        <small>${esc(row.time)} · ${esc(row.name)} · ${esc(row.size_human)}</small>
+        <code class="archive-path" title="${esc(row.path || '')}">${esc(row.path || row.id)}</code>
+      </div>
       <div class="row-actions"><button class="icon-btn" data-play="${esc(row.id)}" data-name="${esc(row.name)}">Play</button><a class="icon-btn" href="/api/download?path=${encodeURIComponent(row.id)}">Download</a></div>
     </div>`).join('') : '<div class="muted">No recordings match the selected filters.</div>';
   await loadTimeline();
@@ -317,6 +321,7 @@ function setupArchiveActions() {
 function playRecording(id, name) {
   const player = $('player');
   player.src = `/api/media?path=${encodeURIComponent(id)}`;
+  player.dataset.archivePath = id;
   $('playbackName').textContent = name;
   player.load();
   player.play().catch(() => {});
