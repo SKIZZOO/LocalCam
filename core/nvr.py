@@ -224,7 +224,7 @@ class StreamState:
             return self.frame
 
     def live_audio(self, handler):
-        """Stream camera audio as fragmented MP4 for browser playback."""
+        """Stream camera audio as Ogg/Opus, which browsers can play directly."""
         target = with_credentials(
             self.camera['url'],
             str(self.camera.get('username', '')),
@@ -240,12 +240,11 @@ class StreamState:
             '-i', target,
             '-map', '0:a:0?',
             '-vn',
-            '-c:a', 'aac',
+            '-c:a', 'libopus',
             '-ar', '48000',
-            '-ac', '2',
-            '-b:a', '128k',
-            '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
-            '-f', 'mp4',
+            '-ac', '1',
+            '-b:a', '96k',
+            '-f', 'ogg',
             'pipe:1',
         ]
         try:
@@ -259,7 +258,7 @@ class StreamState:
         except OSError:
             return self.server_app_error(handler, 'Live audio could not be started.')
         handler.send_response(200)
-        handler.send_header('Content-Type', 'audio/mp4')
+        handler.send_header('Content-Type', 'audio/ogg; codecs=opus')
         handler.send_header('Cache-Control', 'no-store')
         handler.send_header('X-Content-Type-Options', 'nosniff')
         handler.end_headers()
