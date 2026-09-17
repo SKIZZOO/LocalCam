@@ -165,6 +165,36 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
                 return self._json(self.server_app.safe_settings())
+            if path == '/api/folder-picker':
+                if not self.server_app.role(self, 'admin'):
+                    return self._error(403, 'Admin role required')
+                kind = (q.get('kind') or ['record'])[0]
+                if kind not in ('record', 'snapshot'):
+                    return self._error(400, 'Unknown folder type')
+                current = (q.get('current') or [''])[0].strip()
+                try:
+                    from tkinter import Tk, filedialog
+                    initial = Path(current).expanduser()
+                    if not initial.is_absolute():
+                        initial = self.server_app.base_dir / initial
+                    if not initial.is_dir():
+                        initial = self.server_app.base_dir
+                    root = Tk()
+                    root.withdraw()
+                    try:
+                        root.attributes('-topmost', True)
+                        root.update()
+                        selected = filedialog.askdirectory(
+                            parent=root,
+                            title='Choose LocalCam folder',
+                            initialdir=str(initial),
+                            mustexist=False,
+                        )
+                    finally:
+                        root.destroy()
+                    return self._json({'cancelled': not bool(selected), 'path': selected or ''})
+                except Exception as exc:
+                    return self._error(500, f'Windows folder picker is unavailable: {exc}')
             if path == '/api/streams':
                 return self._json([
                     {'id': s.id, 'name': s.name, 'url': s.camera['url'], 'ptz_enabled': bool((s.camera.get('ptz') or {}).get('enabled')), **s.status()}
