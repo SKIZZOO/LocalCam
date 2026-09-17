@@ -13,8 +13,8 @@
   style.textContent = `
     .cam > .ptz { display:none !important; }
     .cam-body.live-view { position:relative; overflow:hidden; background:#02060b; touch-action:none; }
-    .cam-body.live-view img { transform-origin:center center; will-change:transform; user-select:none; -webkit-user-drag:none; cursor:grab; }
-    .cam-body.live-view img.dragging { cursor:grabbing; }
+.cam-body.live-view img, .cam-body.live-view video { transform-origin:center center; will-change:transform; user-select:none; -webkit-user-drag:none; cursor:grab; }
+.cam-body.live-view img.dragging, .cam-body.live-view video.dragging { cursor:grabbing; }
     .viewer-toolbar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:8px 10px; border-top:1px solid rgba(255,255,255,.08); background:rgba(7,12,20,.94); }
     .viewer-group { display:flex; align-items:center; gap:4px; }
     .viewer-btn { min-width:34px; height:30px; padding:0 9px; border:1px solid rgba(255,255,255,.11); border-radius:8px; background:rgba(20,31,47,.9); color:#eef5ff; cursor:pointer; font-size:12px; }
@@ -104,18 +104,18 @@
   }
 
   function enhance(card) {
-    const img = card.querySelector('.cam-body img');
+    const img = card.querySelector('.live-video') || card.querySelector('.cam-body img');
     const audio = card.querySelector('.live-audio');
     const body = card.querySelector('.cam-body');
     if (!img || !body || body.dataset.liveViewEnhanced) return;
-    const id = getId(img);
+    const id = img.dataset.cameraId || getId(img);
     if (!id) return;
 
     body.dataset.liveViewEnhanced = '1';
     body.classList.add('live-view');
     const viewer = stateFor(id, body, img);
     const canControl = typeof window.localcamCanControl === 'function' ? window.localcamCanControl() : false;
-    img.draggable = false;
+    if ('draggable' in img) img.draggable = false;
 
     body.addEventListener('wheel', (e) => {
       e.preventDefault();
