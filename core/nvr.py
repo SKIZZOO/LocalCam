@@ -195,6 +195,16 @@ class StreamState:
         self.last_error = ''
         self.record_retry_at = 0.0
         self._start()
+        m = self.cfg.get('motion', {})
+        if m.get('enabled'):
+            self.motion = MotionDetector(
+                self.get_frame,
+                self._on_motion,
+                m.get('interval_seconds', .5),
+                m.get('threshold', 8),
+                m.get('min_changed_fraction', .012),
+            )
+            self.motion.start()
 
     @property
     def id(self):
@@ -227,17 +237,6 @@ class StreamState:
         if self.preview:
             self.preview.stop()
         self._start(quality)
-        m = self.cfg.get('motion', {})
-        if m.get('enabled'):
-            self.motion = MotionDetector(
-                self.get_frame,
-                self._on_motion,
-                m.get('interval_seconds', .5),
-                m.get('threshold', 8),
-                m.get('min_changed_fraction', .012),
-            )
-            self.motion.start()
-
     def _frame(self, frame):
         with self.lock:
             self.frame = frame
