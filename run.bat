@@ -37,7 +37,7 @@ if not exist "%VENV%" (
   if errorlevel 1 goto :failed
 ) else (
   set "MISSING="
-  for /f "delims=" %%M in ('"%VENV%" -c "import importlib.util; mods=['PIL','psutil','onvif','win32serviceutil','PyInstaller','pytest']; print(','.join(m for m in mods if importlib.util.find_spec(m) is None))"') do set "MISSING=%%M"
+  for /f "delims=" %%M in ('"%VENV%" -c "import importlib.util; mods=['PIL','psutil','onvif']; print(','.join(m for m in mods if importlib.util.find_spec(m) is None))"') do set "MISSING=%%M"
   if defined MISSING (
     echo Missing Python components: !MISSING!
     echo.
