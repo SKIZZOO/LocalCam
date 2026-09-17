@@ -251,6 +251,46 @@ def _probe_batch(ffmpeg_path: str, candidates: list[tuple[str, str]], username: 
     return None, checked
 
 
+def _probe_all(ffmpeg_path: str, candidates: list[tuple[str, str]], username: str, password: str,
+              timeout_seconds: int, seen: set[str], failures: list[str], checked: int) -> tuple[list[dict[str, Any]], int]:
+    pending = [(candidate, method) for candidate, method in candidates if candidate not in seen]
+    if not pending:
+        return [], checked
+    for candidate, _ in pending:
+        seen.add(candidate)
+    found: list[dict[str, Any]] = []
+    executor = ThreadPoolExecutor(max_workers=min(4, len(pending)), thread_name_prefix='rtsp-probe-all')
+    futures = {
+        executor.submit(test_rtsp, ffmpeg_path, candidate, username, password, timeout_seconds): (candidate, method)
+        for candidate, method in pending
+    }
+    try:
+        for future in as_completed(futures):
+            candidate, method = futures[future]
+            checked += 1
+            try:
+                result = future.result()
+            except Exception as exc:
+                result = {'ok': False, 'error': str(exc)}
+            if result.get('ok'):
+                found.append({
+                    'ok': True,
+                    'url': redact_rtsp_url(candidate),
+                    'suggested_url': candidate,
+                    'transport': result.get('transport', ''),
+                    'user_agent': result.get('user_agent', ''),
+                    'method': method,
+                    'candidates_checked': checked,
+                })
+            else:
+                failure = _failure_for(candidate, result)
+                if failure:
+                    failures.append(failure)
+    finally:
+        executor.shutdown(wait=True)
+    return found, checked
+
+
 def snapshot_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
                  timeout_seconds: int = 5) -> dict[str, Any]:
     target = with_credentials(url, username, password)
@@ -332,22 +372,21 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
 
     base = _candidate_base(original)
     if base:
-        # Test every channel/stream variant separately. _probe_batch stops on
-        # the first success in a batch, so channel candidates are intentionally
-        # probed one at a time here to discover all usable feeds.
-        for candidate, method in [(base + path, 'channel stream') for path in CHANNEL_RTSP_PATHS]:
-            result, checked = _probe_batch(
-                ffmpeg_path,
-                [(candidate, method)],
-                username,
-                password,
-                timeout_seconds,
-                seen,
-                failures,
-                checked,
-            )
-            if result:
-                found_streams.append(result)
+        # Probe all channel/stream variants together. Some cameras expose a
+        # second feed as ch01_0/ch01_1 even when ch00_0 or ch00_1 is already
+        # working, so detection must collect every successful candidate.
+        channel_candidates = [(base + path, 'channel stream') for path in CHANNEL_RTSP_PATHS]
+        channel_results, checked = _probe_all(
+            ffmpeg_path,
+            channel_candidates,
+            username,
+            password,
+            timeout_seconds,
+            seen,
+            failures,
+            checked,
+        )
+        found_streams.extend(channel_results)
 
         common = [(base + path, 'common path') for path in COMMON_RTSP_PATHS if base + path not in seen]
         for start in range(0, len(common), 4):
