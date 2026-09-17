@@ -6,7 +6,19 @@ const esc = (value) => String(value ?? '').replace(/[&<>\"]/g, (char) => ({
 }[char]));
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return d.toLocaleDateString('en-CA');
+}
+
+function dateShift(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString('en-CA');
+}
+
+function archiveDateTime(day, time, endOfDay = false) {
+  if (!time) return '';
+  return `${day}T${time}:${endOfDay ? '59' : '00'}`;
 }
 
 function can(action) {
@@ -176,7 +188,7 @@ function renderDashboard() {
 
     return `<article class="cam">
       <div class="cam-head"><div class="cam-title">${esc(stream.name)}</div><span class="pill ${cls}">${badge}</span></div>
-      <div class="cam-body"><img src="/live/${encodeURIComponent(stream.id)}.mjpg" alt="${esc(stream.name)}"><div class="cam-overlay">RTSP · local LAN</div></div>
+      <div class="cam-body"><img src="/live/${encodeURIComponent(stream.id)}.mjpg" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.mp4"></audio><div class="cam-overlay">RTSP · local LAN · audio</div></div>
       <div class="cam-foot"><span>${stream.online ? 'Connected' : 'Waiting for stream'}</span><div class="cam-actions"><button class="small-btn" data-action="snapshot" data-id="${esc(stream.id)}">Snapshot</button>${recordButton}</div></div>
       ${ptz}
     </article>`;
@@ -238,8 +250,14 @@ function initDates() {
 async function loadRecordings() {
   const day = $('archiveDate').value || today();
   const camera = $('archiveCamera').value || '';
+  const reason = $('archiveReason').value || '';
+  const from = archiveDateTime(day, $('archiveFrom').value);
+  const to = archiveDateTime(day, $('archiveTo').value, true);
   const query = $('archiveSearch').value || '';
-  const rows = await api(`/api/recordings?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}&q=${encodeURIComponent(query)}`);
+  const params = new URLSearchParams({ date: day, camera, reason, q: query });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const rows = await api(`/api/recordings?${params.toString()}`);
   $('archiveCount').textContent = `${rows.length} segments`;
   $('recordingsList').innerHTML = rows.length ? rows.map((row) => `
     <div class="row archive-row">
@@ -258,7 +276,7 @@ async function loadTimeline() {
   $('timelineDate').textContent = day;
   const camera = $('archiveCamera').value || '';
   const [segments, events] = await Promise.all([
-    api(`/api/timeline?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}`),
+    api(`/api/timeline?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}&reason=${encodeURIComponent(reason)}`),
     api(`/api/events?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}`)
   ]);
   drawTimeline(segments, events);
@@ -283,8 +301,8 @@ function drawTimeline(items, events) {
     segment.className = 'segment';
     segment.style.left = `${(startSeconds / 86400) * 100}%`;
     segment.style.width = `${Math.max(0.3, (duration / 86400) * 100)}%`;
-    segment.title = `${item.camera} · ${start.toLocaleTimeString()}`;
-    segment.addEventListener('click', () => playRecording(item.id, item.id.split('/').pop()));
+    segment.title = `${item.camera} · ${item.reason} · ${start.toLocaleTimeString()}`;
+    segment.addEventListener('click', () => playRecording(item.id, item.name || item.id.split('/').pop()));
     box.appendChild(segment);
   });
   events.forEach((item) => {
@@ -299,15 +317,31 @@ function drawTimeline(items, events) {
 }
 
 function setupArchiveActions() {
-  $('archiveSearchBtn').addEventListener('click', () => loadRecordings().catch((error) => showToast(error.message, 'error')));
-  $('archiveDate').addEventListener('change', () => loadRecordings().catch((error) => showToast(error.message, 'error')));
-  $('archiveCamera').addEventListener('change', () => loadRecordings().catch((error) => showToast(error.message, 'error')));
+  const reload = () => loadRecordings().catch((error) => showToast(error.message, 'error'));
+  $('archiveSearchBtn').addEventListener('click', reload);
+  ['archiveDate','archiveCamera','archiveReason','archiveFrom','archiveTo'].forEach((id) => {
+    $(id)?.addEventListener('change', reload);
+  });
   $('archiveSearch').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') loadRecordings().catch((error) => showToast(error.message, 'error'));
+    if (event.key === 'Enter') reload();
+  });
+  document.querySelectorAll('[data-archive-quick]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const offset = button.dataset.archiveQuick === 'yesterday' ? -1 : 0;
+      $('archiveDate').value = dateShift(offset);
+      $('archiveFrom').value = '';
+      $('archiveTo').value = '';
+      reload();
+    });
   });
   $('recordingsList').addEventListener('click', (event) => {
     const button = event.target.closest('[data-play]');
+    const edit = event.target.closest('[data-edit]');
     if (button) playRecording(button.dataset.play, button.dataset.name);
+    if (edit) {
+      playRecording(edit.dataset.edit, edit.dataset.name);
+      openClipEditor(edit.dataset.edit, edit.dataset.name);
+    }
   });
   document.querySelectorAll('[data-seek]').forEach((button) => {
     button.addEventListener('click', () => seekPlayer(Number(button.dataset.seek)));
@@ -315,7 +349,13 @@ function setupArchiveActions() {
   $('playbackSpeed').addEventListener('change', () => { $('player').playbackRate = Number($('playbackSpeed').value); });
   $('playerFullscreen').addEventListener('click', () => $('player').requestFullscreen?.());
   $('player').addEventListener('timeupdate', () => { $('playerCurrent').textContent = fmtTime($('player').currentTime); });
-  $('player').addEventListener('loadedmetadata', () => { $('playerDuration').textContent = fmtTime($('player').duration); });
+  $('player').addEventListener('loadedmetadata', () => {
+    $('playerDuration').textContent = fmtTime($('player').duration);
+    const end = $('editEnd');
+    if (end && (Number(end.value) <= 0 || Number(end.value) > $('player').duration)) {
+      end.value = $('player').duration.toFixed(1);
+    }
+  });
   $('player').addEventListener('error', () => {
     const source = $('player').dataset.archivePath;
     if (source) showToast('This recording could not be played. Try Download to open the original file.', 'error');
@@ -326,9 +366,67 @@ function playRecording(id, name) {
   const player = $('player');
   player.src = `/api/media?path=${encodeURIComponent(id)}`;
   player.dataset.archivePath = id;
+  player.dataset.archiveName = name;
   $('playbackName').textContent = name;
+  $('editorSource').textContent = name;
   player.load();
+  openClipEditor(id, name);
   player.play().catch(() => {});
+}
+
+function openClipEditor(id, name) {
+  const player = $('player');
+  player.dataset.archivePath = id;
+  player.dataset.archiveName = name;
+  $('editorSource').textContent = name;
+  $('editStart').value = '0';
+  $('editEnd').value = Number.isFinite(player.duration) ? player.duration.toFixed(1) : '0';
+  $('editorStatus').textContent = 'Use the player to choose the start and end of your clip.';
+}
+
+function setupClipEditorActions() {
+  document.querySelectorAll('[data-editor]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const action = button.dataset.editor;
+      const player = $('player');
+      if (action === 'set-start') $('editStart').value = Math.max(0, player.currentTime || 0).toFixed(1);
+      if (action === 'set-end') $('editEnd').value = Math.max(0, player.currentTime || 0).toFixed(1);
+      if (action !== 'export') return;
+
+      const source = player.dataset.archivePath;
+      if (!source) {
+        showToast('Select a recording first.', 'error');
+        return;
+      }
+      const start = Number($('editStart').value);
+      const end = Number($('editEnd').value);
+      if (!(end > start)) {
+        showToast('Clip end must be after clip start.', 'error');
+        return;
+      }
+      button.disabled = true;
+      $('editorStatus').textContent = 'Exporting clip…';
+      try {
+        const result = await api('/api/clip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: source, start, end })
+        });
+        $('editorStatus').innerHTML = '';
+        const link = document.createElement('a');
+        link.className = 'button primary';
+        link.href = `/api/download?path=${encodeURIComponent(result.id)}`;
+        link.textContent = `Download ${result.filename}`;
+        $('editorStatus').appendChild(link);
+        showToast('Clip exported successfully.', 'success');
+      } catch (error) {
+        $('editorStatus').textContent = error.message;
+        showToast(error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
 }
 
 function seekPlayer(seconds) {
@@ -342,6 +440,69 @@ function fmtTime(seconds) {
   const remaining = Math.floor(seconds % 60);
   return `${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`;
 }
+
+let talkSession = null;
+
+async function startTalk(cameraId) {
+  if (talkSession) return;
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    showToast('Your browser does not provide microphone recording here. Open LocalCam in a secure browser context.', 'error');
+    return;
+  }
+
+  try {
+    const media = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+    const preferred = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find((type) => MediaRecorder.isTypeSupported(type));
+    const recorder = preferred ? new MediaRecorder(media, { mimeType: preferred }) : new MediaRecorder(media);
+    const chunks = [];
+    talkSession = { cameraId, media, recorder, chunks, timer: null };
+
+    recorder.addEventListener('dataavailable', (event) => {
+      if (event.data?.size) chunks.push(event.data);
+    });
+    recorder.addEventListener('stop', async () => {
+      const current = talkSession;
+      if (!current) return;
+      clearTimeout(current.timer);
+      current.media.getTracks().forEach((track) => track.stop());
+      talkSession = null;
+      if (!chunks.length) return;
+
+      try {
+        const blob = new Blob(chunks, { type: preferred || recorder.mimeType || 'audio/webm' });
+        const buffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        await api(`/api/talk/${encodeURIComponent(cameraId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio_base64: btoa(binary), mime: blob.type })
+        });
+        showToast('Talk audio sent to the camera.', 'success');
+      } catch (error) {
+        showToast(error.message || 'Talk failed.', 'error');
+      }
+    });
+    recorder.start(250);
+    talkSession.timer = setTimeout(() => stopTalk(), 10000);
+    showToast('Talk mode active — release the button when finished.', 'info');
+  } catch (error) {
+    showToast(error.message || 'Microphone access was denied.', 'error');
+  }
+}
+
+function stopTalk() {
+  if (!talkSession) return;
+  if (talkSession.recorder.state !== 'inactive') talkSession.recorder.stop();
+}
+
+window.localcamStartTalk = startTalk;
+window.localcamStopTalk = stopTalk;
 
 async function loadEvents() {
   const day = $('eventsDate').value || today();
@@ -677,6 +838,7 @@ async function init() {
   setupNavigation();
   setupDashboardActions();
   setupArchiveActions();
+  setupClipEditorActions();
   setupEventActions();
   setupCameraSettings();
   setupSecurityActions();
