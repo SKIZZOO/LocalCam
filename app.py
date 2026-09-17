@@ -7,7 +7,7 @@ import webbrowser
 from pathlib import Path
 
 from core.config import load_config
-from server import LocalCamServer
+from core.nvr import LocalCamServer
 
 BASE_DIR = Path(__file__).resolve().parent
 
