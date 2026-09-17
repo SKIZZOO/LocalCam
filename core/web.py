@@ -17,7 +17,7 @@ from typing import Any
 
 from core.config import hash_password, verify_password
 from core.nvr import LocalCamServer, safe_name, human_bytes
-from core.rtsp import test_rtsp
+from core.rtsp import discover_and_test_rtsp, test_rtsp
 
 WEB_DIR = Path(__file__).resolve().parent.parent / 'web'
 
@@ -283,6 +283,24 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                     return self._json({'results': found, 'scanned_addresses': len(hosts), 'ports': list(ports)})
                 except ValueError:
                     return self._error(400, 'Enter a valid private IPv4 subnet, such as 192.168.1.0/24.')
+            if path == '/api/camera-assist':
+                if not self.server_app.role(self, 'admin'):
+                    return self._error(403, 'Admin role required')
+                x = self._body(100_000)
+                camera_id = str(x.get('camera_id', '')).strip()
+                url = str(x.get('url', '')).strip()
+                username = str(x.get('username', '')).strip()
+                password = str(x.get('password', ''))
+                saved = next((c for c in self.server_app.cfg().get('cameras', []) if str(c.get('id', '')) == camera_id), None)
+                if saved:
+                    url = url or str(saved.get('url', ''))
+                    username = username or str(saved.get('username', ''))
+                    if not password:
+                        password = str(saved.get('password', ''))
+                if not url:
+                    return self._error(400, 'Camera RTSP URL is required.')
+                result = discover_and_test_rtsp(self.server_app.cfg()['ffmpeg_path'], url, username, password, 2)
+                return self._json(result)
             if path == '/api/settings':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
