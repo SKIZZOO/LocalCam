@@ -93,6 +93,8 @@ if errorlevel 1 set "NEED_INSTALL=1"
 if errorlevel 1 set "NEED_INSTALL=1"
 "%VENV%" -c "import rtsp_backchannel" >nul 2>&1
 if errorlevel 1 set "NEED_INSTALL=1"
+"%VENV%" -c "import aiortc, av" >nul 2>&1
+if errorlevel 1 set "NEED_INSTALL=1"
 if "%NEED_INSTALL%"=="0" goto config_check
 echo.
 echo One or more LocalCam Python components are missing.
