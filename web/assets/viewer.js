@@ -172,7 +172,7 @@
     const note=document.createElement('div'); note.className='viewer-note';
     note.textContent=ptzMap.get(id) ? 'Mouse wheel / +− = digital zoom · drag = digital pan · arrows = physical PTZ.' : 'Mouse wheel / +− = digital zoom · drag = digital pan. Enable ONVIF PTZ for physical movement.';
     toolbar.appendChild(note);
-    card.appendChild(toolbar);
+    body.appendChild(toolbar);
 
     toolbar.addEventListener('click', async (e) => {
       const b=e.target.closest('button'); if(!b) return;
