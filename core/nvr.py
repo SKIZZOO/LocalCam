@@ -185,6 +185,7 @@ class StreamState:
         self.seq = 0
         self.last_frame = 0.0
         self.preview = None
+        self.preview_quality = str(self.cfg.get('live_quality', 'high'))
         self.recorder = None
         self.motion = None
         self.motion_active = False
@@ -202,7 +203,8 @@ class StreamState:
     def name(self):
         return str(self.camera.get('name', self.id))
 
-    def _start(self):
+    def _start(self, quality=None):
+        self.preview_quality = str(quality or self.preview_quality or self.cfg.get('live_quality', 'high')).lower()
         self.preview = PreviewWorker(
             self.cfg['ffmpeg_path'],
             self.camera['url'],
@@ -211,9 +213,19 @@ class StreamState:
             int(self.cfg['web_live_width']),
             int(self.cfg['web_live_fps']),
             self._frame,
-            self.cfg.get('live_quality', 'high'),
+            self.preview_quality,
         )
         self.preview.start()
+
+    def set_preview_quality(self, quality):
+        quality = str(quality or 'high').lower()
+        if quality not in PreviewWorker.QUALITY_PRESETS:
+            quality = 'high'
+        if quality == self.preview_quality and self.preview:
+            return
+        if self.preview:
+            self.preview.stop()
+        self._start(quality)
         m = self.cfg.get('motion', {})
         if m.get('enabled'):
             self.motion = MotionDetector(
@@ -309,7 +321,13 @@ class StreamState:
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             pass
 
-    def mjpeg(self, handler):
+    def mjpeg(self, handler, quality='high'):
+        quality = str(quality or 'high').lower()
+        if quality not in PreviewWorker.QUALITY_PRESETS:
+            quality = 'high'
+        if quality != self.preview_quality:
+            self.set_preview_quality(quality)
+
         with self.lock:
             last = self.seq
         handler.send_response(200)
