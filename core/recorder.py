@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import threading
@@ -71,7 +72,11 @@ class Recorder:
             day_dir = self.root / self.safe_name(camera_name) / datetime.now().strftime('%Y-%m-%d')
             day_dir.mkdir(parents=True, exist_ok=True)
             self.reason = self._reason()
-            pattern = str(day_dir / f'{self.safe_name(camera_name)}_%Y-%m-%d_%H-%M-%S_{self.reason}.mkv')
+            camera_token = self.file_token(camera_name)
+            reason_token = self.file_token(self.reason).upper()
+            # Sortable, self-describing Windows filename:
+            # YYYY-MM-DD-HH-MM-SS-CAMERA-WHY.mkv
+            pattern = str(day_dir / f'%Y-%m-%d-%H-%M-%S-{camera_token}-{reason_token}.mkv')
             target = with_credentials(url, self.username, self.password)
 
             self.attempt_dir = day_dir
@@ -247,3 +252,8 @@ class Recorder:
     @staticmethod
     def safe_name(text: str) -> str:
         return ''.join(ch if ch.isalnum() or ch in ' -_' else '_' for ch in text).strip() or 'camera'
+
+    @staticmethod
+    def file_token(text: str) -> str:
+        token = re.sub(r'[^A-Za-z0-9]+', '-', str(text)).strip('-')
+        return token or 'camera'
