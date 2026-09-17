@@ -22,3 +22,9 @@
 .path-field input{min-width:0;font-family:Consolas,'Cascadia Code',monospace;font-size:12px}
 .path-full{display:block;margin-top:6px;padding:7px 9px;border:1px solid var(--line2);border-radius:9px;background:#060b12;color:#b7c6d8;font:11px/1.45 Consolas,'Cascadia Code',monospace;overflow-wrap:anywhere;word-break:break-word;user-select:text}
 @media(max-width:760px){.path-grid{grid-template-columns:1fr}.setting-section{grid-column:auto}.path-field{grid-template-columns:1fr}}
+
+/* Archive: keep complete Windows paths readable without expanding the page too much. */
+.archive-row{grid-template-columns:minmax(0,1fr) auto}
+.archive-main{min-width:0}
+.archive-path{display:block;margin-top:5px;padding:6px 8px;border:1px solid var(--line2);border-radius:8px;background:#060b12;color:#aebed1;font:11px/1.4 Consolas,'Cascadia Code',monospace;white-space:normal;overflow-wrap:anywhere;word-break:break-all;user-select:text}
+@media(max-width:760px){.archive-row{grid-template-columns:1fr}.archive-row .row-actions{justify-content:flex-start}}
