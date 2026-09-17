@@ -134,7 +134,7 @@
   }
 
   function addDetectedFeeds(block, feeds) {
-    if (!window.state || !state.settings) {
+    if (typeof state === 'undefined' || !state.settings) {
       showToast('Camera settings are still loading. Try again in a moment.', 'error');
       return;
     }
