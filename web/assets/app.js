@@ -177,7 +177,11 @@ function renderDashboard() {
     const badge = stream.motion ? 'MOTION' : stream.recording ? 'REC' : stream.online ? 'LIVE' : 'OFFLINE';
     const cls = stream.motion || stream.recording || stream.online ? 'good' : '';
     const recordButton = can('control') ?
-      `<button class="small-btn" data-action="record" data-id="${esc(stream.id)}" data-recording="${stream.recording ? '1' : '0'}">${stream.recording ? 'Stop' : 'Record'}</button>` : '';
+      `<label class="record-switch" title="Toggle recording for ${esc(stream.name)}">
+        <input type="checkbox" data-action="record" data-id="${esc(stream.id)}" data-recording="${stream.recording ? '1' : '0'}" ${stream.recording ? 'checked' : ''} aria-label="Toggle recording">
+        <span class="record-slider" aria-hidden="true"></span>
+        <span class="record-switch-label">${stream.recording ? 'Recording' : 'Record'}</span>
+      </label>` : '';
     const ptz = stream.ptz_enabled && can('control') ? `
       <div class="ptz">
         <button data-action="ptz" data-id="${esc(stream.id)}" data-pan="-1" data-tilt="1">↖</button>
@@ -230,9 +234,10 @@ async function capture(id) {
 }
 
 async function toggleRecord(id, recording) {
-  await api(`/api/record/${encodeURIComponent(id)}/${recording ? 'stop' : 'start'}`, { method: 'POST' });
+  const result = await api(`/api/record/${encodeURIComponent(id)}/toggle`, { method: 'POST' });
+  if (!result.ok) throw new Error(result.error || 'Recording could not be changed.');
   await Promise.all([loadInfo(), loadStreams()]);
-  showToast(recording ? 'Recording stopped.' : 'Recording started.', 'success');
+  showToast(result.recording ? 'Recording started.' : 'Recording stopped.', 'success');
 }
 
 async function ptz(id, pan, tilt) {
@@ -280,6 +285,7 @@ async function loadTimeline() {
   const day = $('archiveDate').value || today();
   $('timelineDate').textContent = day;
   const camera = $('archiveCamera').value || '';
+  const reason = $('archiveReason')?.value || '';
   const [segments, events] = await Promise.all([
     api(`/api/timeline?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}&reason=${encodeURIComponent(reason)}`),
     api(`/api/events?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}`)
