@@ -1,4 +1,4 @@
-// LAN camera discovery helper. The server checks a bounded set of common RTSP ports.
+// LAN camera discovery and RTSP path assistant.
 (() => {
   const camerasTab = document.getElementById('tab-cameras');
   const cameraEditor = document.getElementById('cameraEditor');
@@ -16,7 +16,7 @@
     <div class="discovery-head">
       <div>
         <h3>Find cameras on your network</h3>
-        <p class="hint">Scan a private IPv4 subnet for common RTSP ports. An open port only identifies a possible RTSP service; you still need the correct RTSP path and credentials.</p>
+        <p class="hint">Scan a private IPv4 subnet for RTSP ports, then use ONVIF or common stream paths to find the actual video URL.</p>
       </div>
       <span class="pill">LAN</span>
     </div>
@@ -39,12 +39,71 @@
     subnetInput.value = `${parts.slice(0, 3).join('.')}.0/24`;
   }
 
+  function cameraBlock(button) {
+    return button.closest('.camera-block');
+  }
+
+  function ensureAutoButtons() {
+    document.querySelectorAll('#cameraEditor .camera-block').forEach((block) => {
+      const row = block.querySelector('.camera-row');
+      if (!row || row.querySelector('[data-auto-rtsp]')) return;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'icon-btn';
+      button.dataset.autoRtsp = '1';
+      button.textContent = 'Auto-detect RTSP';
+      row.appendChild(button);
+    });
+  }
+
+  async function autoDetect(button) {
+    const block = cameraBlock(button);
+    if (!block) return;
+    const id = block.querySelector('[data-k="id"]')?.value.trim() || '';
+    const url = block.querySelector('[data-k="url"]')?.value.trim() || '';
+    const username = block.querySelector('[data-k="username"]')?.value.trim() || '';
+    const password = block.querySelector('[data-k="password"]')?.value || '';
+    const urlField = block.querySelector('[data-k="url"]');
+
+    if (!urlField) return;
+    if (!url) {
+      status.textContent = 'Enter the camera IP/RTSP address first, for example rtsp://192.168.1.50:554/. '; 
+      return;
+    }
+
+    button.disabled = true;
+    const oldText = button.textContent;
+    button.textContent = 'Detecting…';
+    status.textContent = 'Trying ONVIF media profiles and common RTSP stream paths…';
+    try {
+      const data = await api('/api/camera-assist', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ camera_id: id, url, username, password })
+      });
+      if (!data.ok) {
+        throw new Error(data.error || 'No usable RTSP stream was found.');
+      }
+      urlField.value = data.suggested_url || data.url || url;
+      urlField.focus();
+      status.textContent = `RTSP stream found via ${data.method || 'camera probing'} using ${String(data.transport || '').toUpperCase()}. Click Save settings to keep it.`;
+    } catch (error) {
+      status.textContent = error?.message || 'RTSP auto-detection failed.';
+    } finally {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+
   function addResult(item) {
     const row = document.createElement('div');
     row.className = 'discovery-result';
 
     const info = document.createElement('div');
     info.innerHTML = `<strong>${item.host}:${item.port}</strong><small>RTSP service candidate</small>`;
+
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
 
     const use = document.createElement('button');
     use.type = 'button';
@@ -62,12 +121,43 @@
       }
       url.value = `rtsp://${item.host}:${item.port}/`;
       url.focus();
-      status.textContent = `Added ${item.host}:${item.port}. Enter the camera's RTSP path and credentials, then test the stream.`;
+      status.textContent = `Added ${item.host}:${item.port}. Use Auto-detect RTSP on that camera to find the stream path.`;
+      ensureAutoButtons();
     });
 
-    row.append(info, use);
+    const detect = document.createElement('button');
+    detect.type = 'button';
+    detect.className = 'button ghost';
+    detect.textContent = 'Find stream';
+    detect.addEventListener('click', async () => {
+      const blocks = [...document.querySelectorAll('#cameraEditor .camera-block')];
+      const last = blocks[blocks.length - 1];
+      if (!last) {
+        const addButton = document.getElementById('addCamera');
+        addButton?.click();
+      }
+      const target = [...document.querySelectorAll('#cameraEditor .camera-block')].at(-1);
+      const url = target?.querySelector('[data-k="url"]');
+      if (!target || !url) return;
+      url.value = `rtsp://${item.host}:${item.port}/`;
+      ensureAutoButtons();
+      const auto = target.querySelector('[data-auto-rtsp]');
+      if (auto) await autoDetect(auto);
+    });
+
+    actions.append(use, detect);
+    row.append(info, actions);
     results.appendChild(row);
   }
+
+  cameraEditor.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-auto-rtsp]');
+    if (!button) return;
+    await autoDetect(button);
+  });
+
+  new MutationObserver(ensureAutoButtons).observe(cameraEditor, { childList: true, subtree: true });
+  ensureAutoButtons();
 
   scanButton.addEventListener('click', async () => {
     const subnet = subnetInput.value.trim();
@@ -90,6 +180,7 @@
         return;
       }
       data.results.forEach(addResult);
+      ensureAutoButtons();
     } catch (error) {
       status.textContent = error?.message || 'Scan failed.';
     } finally {
