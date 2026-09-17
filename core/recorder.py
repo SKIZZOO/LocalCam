@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .rtsp import RTSP_AUTO_TRANSPORT, with_credentials
+from .rtsp import RTSP_AUTO_TRANSPORT, redact_rtsp_url, with_credentials
 
 
 class Recorder:
@@ -86,6 +86,11 @@ class Recorder:
                 pattern,
             ]
 
+            self.camera_id = camera_id
+            self.camera_name = camera_name
+            self.url = url
+            self.stop_requested = False
+
             try:
                 proc = subprocess.Popen(
                     cmd,
@@ -102,13 +107,9 @@ class Recorder:
                 return False
 
             self.process = proc
-            self.camera_id = camera_id
-            self.camera_name = camera_name
-            self.url = url
-            self.stop_requested = False
             threading.Thread(target=self._read_stderr, args=(proc,), name='localcam-recorder-log', daemon=True).start()
             threading.Thread(target=self._watchdog, args=(proc,), name='localcam-recorder-watchdog', daemon=True).start()
-            self.on_log(f'{camera_name}: recording started (RTSP transport auto: TCP, then UDP)')
+            self.on_log(f'{camera_name}: recording started (RTSP transport: {RTSP_AUTO_TRANSPORT.upper()})')
             return True
 
     def stop(self) -> None:
@@ -134,7 +135,13 @@ class Recorder:
         for line in proc.stderr:
             line = line.strip()
             if line:
-                self.on_log(f'{self.camera_name}: {line}')
+                # FFmpeg may echo the full input URL on failures. Never expose
+                # configured camera credentials in the LocalCam console log.
+                safe_line = line
+                if self.username or self.password:
+                    safe_line = safe_line.replace(self.username, '***').replace(self.password, '***')
+                safe_line = safe_line.replace('rtsp://***:***@', 'rtsp://***@')
+                self.on_log(f'{self.camera_name}: {safe_line}')
 
     def _watchdog(self, proc: subprocess.Popen[str]) -> None:
         code = proc.wait()
