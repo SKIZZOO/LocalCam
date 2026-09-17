@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#07111f">
   <title>LocalCam — Sign in</title>
-  <link rel="stylesheet" href="/assets/app.css?v=0.7.0">
+  <link rel="stylesheet" href="/assets/app.css?v=0.8.0">
 </head>
 <body class="auth-page">
   <div class="auth-shell">
@@ -38,7 +38,7 @@
   <script>
   const f=document.getElementById('form'),u=document.getElementById('username'),p=document.getElementById('password'),m=document.getElementById('msg');
   document.getElementById('hostLabel').textContent=location.host;
-  f.addEventListener('submit',async e=>{e.preventDefault();m.textContent='';const btn=f.querySelector('button');btn.disabled=true;btn.textContent='Signing in…';try{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value.trim(),password:p.value})});if(r.ok){location.href='/';return;}const j=await r.json().catch(()=>({}));m.textContent=j.error||'Sign-in failed';}catch(err){m.textContent='Server unavailable';}finally{btn.disabled=false;btn.textContent='Sign in';}});
+  f.addEventListener('submit',async e=>{e.preventDefault();m.textContent='';const btn=f.querySelector('button');btn.disabled=true;btn.textContent='Signing in…';try{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({username:u.value.trim(),password:p.value})});if(r.ok){location.replace('/');return;}const j=await r.json().catch(()=>({}));m.textContent=j.error||'Sign-in failed';}catch(err){m.textContent='Server unavailable';}finally{btn.disabled=false;btn.textContent='Sign in';}});
   </script>
 </body>
 </html>
