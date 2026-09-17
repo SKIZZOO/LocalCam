@@ -37,6 +37,8 @@ async function connectWebRTC(stream, video, fallback, quality, generation) {
   if (!window.RTCPeerConnection || generation !== webrtcGeneration) {
     video.style.display = 'none';
     fallback.style.display = '';
+    const transport = video.closest('.cam-body')?.querySelector('[data-live-transport]');
+    if (transport) transport.textContent = 'MJPEG fallback';
     return false;
   }
   const peerId = newPeerId();
@@ -94,6 +96,8 @@ async function connectWebRTC(stream, video, fallback, quality, generation) {
     video.playsInline = true;
     await video.play().catch(() => {});
     video.title = `WebRTC · ${quality}`;
+    const transport = video.closest('.cam-body')?.querySelector('[data-live-transport]');
+    if (transport) transport.textContent = `WebRTC · H.264 · ${quality}`;
     return true;
   } catch (error) {
     try { pc.close(); } catch {}
@@ -325,7 +329,7 @@ function renderDashboard() {
 
     return `<article class="cam">
       <div class="cam-head"><div class="cam-title">${esc(stream.name)}</div><span class="pill ${cls}">${badge}</span></div>
-      <div class="cam-body"><video class="live-video" data-camera-id="${esc(stream.id)}" autoplay muted playsinline preload="none"></video><img class="live-fallback" src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay">RTSP · local LAN · audio</div></div>
+      <div class="cam-body"><video class="live-video" data-camera-id="${esc(stream.id)}" autoplay muted playsinline preload="none"></video><img class="live-fallback" src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay" data-live-transport>WebRTC · H.264</div></div>
       <div class="cam-foot"><span>${stream.online ? 'Connected' : 'Waiting for stream'}</span><div class="cam-actions"><button class="small-btn" data-action="snapshot" data-id="${esc(stream.id)}">Snapshot</button>${recordButton}</div></div>
       ${ptz}
     </article>`;
