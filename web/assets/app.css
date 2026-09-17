@@ -57,3 +57,6 @@
 .record-switch input:checked + .record-slider::after{transform:translateX(18px);background:#35d39f}
 .record-switch-label{font-size:11px;color:var(--muted);min-width:54px}
 .record-switch:hover .record-slider{border-color:rgba(119,167,255,.5)}
+
+.live-quality-control{display:flex;align-items:center;gap:8px}.live-quality-control label{font-size:12px;color:var(--muted)}.quality-select{min-width:155px;padding:8px 10px;border-radius:9px;border:1px solid rgba(255,255,255,.12);background:#101a28;color:#eef5ff}.quality-select:focus{outline:2px solid rgba(119,167,255,.35);outline-offset:1px}
+@media (max-width:700px){.live-quality-control{width:100%}.quality-select{width:100%}}
