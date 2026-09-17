@@ -13,7 +13,7 @@ EXAMPLE_PATH = BASE_DIR / 'config.example.json'
 
 DEFAULT_CONFIG: dict[str, Any] = {
     'app_name': 'LocalCam',
-    'version': '0.5.0',
+    'version': '0.6.0',
     'ffmpeg_path': 'ffmpeg',
     'record_root': 'G:/LocalCam/recordings',
     'snapshot_root': 'G:/LocalCam/snapshots',
@@ -24,20 +24,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
     'web_enabled': True,
     'web_bind': '0.0.0.0',
     'web_port': 8765,
-    'web_live_fps': 6,
-    'web_live_width': 960,
+    'web_live_fps': 8,
+    'web_live_width': 1280,
     'web_auth_enabled': True,
     'notifications_enabled': True,
     'web_password_hash': '',
     'web_secret': '',
+    'web_session_hours': 12,
+    'service_name': 'LocalCamService',
     'motion': {
         'enabled': True,
-        'interval_seconds': 0.75,
+        'interval_seconds': 0.5,
         'threshold': 8.0,
         'min_changed_fraction': 0.012,
         'cooldown_seconds': 15.0,
         'save_event_snapshots': True,
     },
+    'ptz_defaults': {'enabled': False, 'port': 80},
     'cameras': [],
 }
 
@@ -52,7 +55,7 @@ def merge_defaults(defaults: dict[str, Any], data: dict[str, Any]) -> dict[str, 
     return result
 
 
-def hash_password(password: str, salt: str | None = None, iterations: int = 310_000) -> str:
+def hash_password(password: str, salt: str | None = None, iterations: int = 390_000) -> str:
     salt = salt or secrets.token_hex(16)
     derived = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), iterations)
     return f'pbkdf2_sha256${iterations}${salt}${derived.hex()}'
@@ -76,16 +79,17 @@ def ensure_config() -> dict[str, Any]:
             CONFIG_PATH.write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
         else:
             CONFIG_PATH.write_text(json.dumps(DEFAULT_CONFIG, indent=2), encoding='utf-8')
-
     try:
         data = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
     except (OSError, json.JSONDecodeError):
         data = {}
-
     cfg = merge_defaults(DEFAULT_CONFIG, data if isinstance(data, dict) else {})
     changed = False
     if not cfg.get('web_secret'):
         cfg['web_secret'] = secrets.token_urlsafe(32)
+        changed = True
+    if cfg.get('version') != DEFAULT_CONFIG['version']:
+        cfg['version'] = DEFAULT_CONFIG['version']
         changed = True
     if changed:
         save_config(cfg)
