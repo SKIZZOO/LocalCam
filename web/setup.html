@@ -1,41 +1,7 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LocalCam Setup</title>
-  <link rel="stylesheet" href="/assets/app.css">
-</head>
-<body class="auth-page">
-  <div class="auth-card">
-    <div class="logo">LOCAL<span>CAM</span><small>NVR</small></div>
-    <h1>First-run setup</h1>
-    <p>Create the local web password that protects the LocalCam dashboard.</p>
-    <form id="form">
-      <input id="password" type="password" placeholder="New password (8+ characters)" autocomplete="new-password" autofocus>
-      <button class="button primary">Create password</button>
-    </form>
-    <div id="msg" class="error"></div>
-  </div>
-  <script>
-    const form = document.getElementById('form');
-    const password = document.getElementById('password');
-    const message = document.getElementById('msg');
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      message.textContent = '';
-      const response = await fetch('/api/auth/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: password.value })
-      });
-      if (response.ok) {
-        location.href = '/';
-      } else {
-        const data = await response.json().catch(() => ({}));
-        message.textContent = data.error || 'Setup failed.';
-      }
-    });
-  </script>
-</body>
-</html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LocalCam Setup</title><link rel="stylesheet" href="/assets/app.css"></head>
+<body class="auth-page"><div class="auth-card"><div class="logo">LOCAL<span>CAM</span><small>NVR</small></div><h1>First-run setup</h1><p>Create the first local administrator account.</p><form id="form"><input id="username" placeholder="Administrator username" autocomplete="username" autofocus><input id="password" type="password" placeholder="Password (10+ characters)" autocomplete="new-password"><input id="confirm" type="password" placeholder="Confirm password" autocomplete="new-password"><button class="button primary">Create administrator</button></form><div id="msg" class="error"></div></div><script>
+const f=document.getElementById('form'),u=document.getElementById('username'),p=document.getElementById('password'),c=document.getElementById('confirm'),m=document.getElementById('msg');
+f.addEventListener('submit',async e=>{e.preventDefault();m.textContent='';if(p.value!==c.value){m.textContent='Passwords do not match';return;}try{const r=await fetch('/api/auth/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});if(r.ok)location.href='/';else{const j=await r.json().catch(()=>({}));m.textContent=j.error||'Setup failed';}}catch(err){m.textContent='Server unavailable';}});
+</script></body></html>
