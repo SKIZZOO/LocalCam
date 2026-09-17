@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import signal
+import sys
 import threading
 import time
 import webbrowser
@@ -17,7 +19,40 @@ BASE_DIR = Path(__file__).resolve().parent
 APP_VERSION = '0.9.5'
 
 
+class QuietConsoleStream:
+    """Hide successful high-frequency status polls, but keep errors and actions."""
+
+    _routine_poll = re.compile(
+        r'WEB "GET /api/(?:info|streams|auth/status)(?:\?[^ ]*)? HTTP/[0-9.]+" 200(?: |$)'
+    )
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.pending = ''
+
+    def write(self, text):
+        self.pending += text
+        while '\n' in self.pending:
+            line, self.pending = self.pending.split('\n', 1)
+            if not self._routine_poll.search(line):
+                self.stream.write(line + '\n')
+        return len(text)
+
+    def flush(self):
+        if self.pending:
+            if not self._routine_poll.search(self.pending):
+                self.stream.write(self.pending)
+            self.pending = ''
+        self.stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
 def main() -> None:
+    # Keep routine browser polling out of the CMD window; errors, warnings,
+    # startup messages, and user actions remain visible.
+    sys.stdout = QuietConsoleStream(sys.stdout)
     logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
 
     # Create the Windows kill-on-close Job Object before LocalCamServer is
