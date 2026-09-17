@@ -33,9 +33,44 @@
       <div class="camera-grid" id="cameraGrid"></div>
     </section>
     <section class="page" id="page-archive">
-      <div class="panel filters"><label>Date<input id="archiveDate" type="date"></label><label>Camera<select id="archiveCamera"></select></label><label class="grow">Search<input id="archiveSearch" placeholder="Search file name…"></label><button class="button primary" id="archiveSearchBtn">Search</button></div>
-      <div class="archive-layout"><div class="panel"><div class="panel-head"><h2>24-hour timeline</h2><span id="timelineDate" class="muted"></span></div><div id="timeline" class="timeline"></div><div class="timeline-legend"><span><i class="seg"></i> recording</span><span><i class="evt"></i> motion event</span></div></div>
-      <div class="archive-columns"><div class="panel"><div class="panel-head"><h2>Recordings</h2><span id="archiveCount" class="muted"></span></div><div id="recordingsList" class="list"></div></div><div class="panel playback-panel"><div class="panel-head"><h2>Playback</h2><span id="playbackName" class="muted"></span></div><video id="player" controls playsinline></video><div class="player-toolbar"><button class="icon-btn" data-seek="-30">−30s</button><button class="icon-btn" data-seek="-10">−10s</button><button class="icon-btn" data-seek="10">+10s</button><button class="icon-btn" data-seek="30">+30s</button><label>Speed <select id="playbackSpeed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="1.5">1.5x</option><option value="2">2x</option></select></label><button class="icon-btn" id="playerFullscreen">Fullscreen</button></div><div class="player-time"><span id="playerCurrent">00:00</span><span id="playerDuration">00:00</span></div></div></div></div>
+      <div class="panel archive-picker">
+        <div class="picker-header"><div><h2>Footage picker</h2><p class="hint">Choose a day, camera, time range, and recording reason. Click a timeline segment to load it.</p></div><span id="archiveCount" class="pill"></span></div>
+        <div class="archive-filters">
+          <label>Date<input id="archiveDate" type="date"></label>
+          <label>Camera<select id="archiveCamera"></select></label>
+          <label>Reason<select id="archiveReason"><option value="">All triggers</option><option value="MANUAL">Manual</option><option value="MOTION">Motion</option><option value="CONTINUOUS">Continuous</option></select></label>
+          <label>From<input id="archiveFrom" type="time"></label>
+          <label>To<input id="archiveTo" type="time"></label>
+          <label class="grow">Search<input id="archiveSearch" placeholder="Camera, filename, path…"></label>
+          <div class="quick-picks"><button class="icon-btn" data-archive-quick="today">Today</button><button class="icon-btn" data-archive-quick="yesterday">Yesterday</button><button class="button primary" id="archiveSearchBtn">Find footage</button></div>
+        </div>
+      </div>
+      <div class="archive-layout">
+        <div class="panel">
+          <div class="panel-head"><h2>24-hour timeline</h2><span id="timelineDate" class="muted"></span></div>
+          <div id="timeline" class="timeline"></div>
+          <div class="timeline-legend"><span><i class="seg"></i> recording</span><span><i class="evt"></i> motion event</span></div>
+        </div>
+        <div class="archive-columns">
+          <div class="panel"><div class="panel-head"><h2>Recordings</h2><span class="muted">Select a file to preview or edit</span></div><div id="recordingsList" class="list"></div></div>
+          <div class="panel playback-panel">
+            <div class="panel-head"><h2>Playback</h2><span id="playbackName" class="muted"></span></div>
+            <video id="player" controls playsinline></video>
+            <div class="player-toolbar"><button class="icon-btn" data-seek="-30">−30s</button><button class="icon-btn" data-seek="-10">−10s</button><button class="icon-btn" data-seek="10">+10s</button><button class="icon-btn" data-seek="30">+30s</button><label>Speed <select id="playbackSpeed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="1.5">1.5x</option><option value="2">2x</option></select></label><button class="icon-btn" id="playerFullscreen">Fullscreen</button></div>
+            <div class="player-time"><span id="playerCurrent">00:00</span><span id="playerDuration">00:00</span></div>
+          </div>
+        </div>
+        <div class="panel editor-panel" id="clipEditor">
+          <div class="panel-head"><div><h2>In-browser editor</h2><p class="hint">Trim a section of the selected recording and export a new MP4. The original footage is never changed.</p></div><span id="editorSource" class="muted">Nothing selected</span></div>
+          <div class="editor-grid">
+            <label>Start (seconds)<input id="editStart" type="number" min="0" step="0.1" value="0"></label>
+            <label>End (seconds)<input id="editEnd" type="number" min="0" step="0.1" value="0"></label>
+            <label>Current position<input id="editCurrent" type="text" value="00:00" readonly></label>
+            <div class="editor-actions"><button class="icon-btn" data-editor="set-start">Set start here</button><button class="icon-btn" data-editor="set-end">Set end here</button><button class="button primary" data-editor="export">Export clip</button></div>
+          </div>
+          <div id="editorStatus" class="muted"></div>
+        </div>
+      </div>
     </section>
     <section class="page" id="page-events"><div class="panel filters"><label>Date<input id="eventsDate" type="date"></label><label>Camera<select id="eventsCamera"></select></label><button class="button primary" id="eventsSearchBtn">Search</button></div><div class="panel"><div class="panel-head"><h2>Motion events</h2><span id="eventsCount" class="muted"></span></div><div id="eventsList" class="events"></div></div></section>
     <section class="page" id="page-settings">
