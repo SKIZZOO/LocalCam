@@ -1,41 +1,7 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LocalCam Login</title>
-  <link rel="stylesheet" href="/assets/app.css">
-</head>
-<body class="auth-page">
-  <div class="auth-card">
-    <div class="logo">LOCAL<span>CAM</span><small>NVR</small></div>
-    <h1>Sign in</h1>
-    <p>Enter your LocalCam web password.</p>
-    <form id="form">
-      <input id="password" type="password" placeholder="Password" autocomplete="current-password" autofocus>
-      <button class="button primary">Sign in</button>
-    </form>
-    <div id="msg" class="error"></div>
-  </div>
-  <script>
-    const form = document.getElementById('form');
-    const password = document.getElementById('password');
-    const message = document.getElementById('msg');
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      message.textContent = '';
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: password.value })
-      });
-      if (response.ok) {
-        location.href = '/';
-      } else {
-        const data = await response.json().catch(() => ({}));
-        message.textContent = data.error || 'Login failed.';
-      }
-    });
-  </script>
-</body>
-</html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LocalCam Sign in</title><link rel="stylesheet" href="/assets/app.css"></head>
+<body class="auth-page"><div class="auth-card"><div class="logo">LOCAL<span>CAM</span><small>NVR</small></div><h1>Sign in</h1><p>Use your local LocalCam account to access the NVR.</p><form id="form"><input id="username" placeholder="Username" autocomplete="username" autofocus><input id="password" type="password" placeholder="Password" autocomplete="current-password"><button class="button primary">Sign in</button></form><div id="msg" class="error"></div></div><script>
+const f=document.getElementById('form'),u=document.getElementById('username'),p=document.getElementById('password'),m=document.getElementById('msg');
+f.addEventListener('submit',async e=>{e.preventDefault();m.textContent='';try{const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});if(r.ok)location.href='/';else{const j=await r.json().catch(()=>({}));m.textContent=j.error||'Sign-in failed';}}catch(err){m.textContent='Server unavailable';}});
+</script></body></html>
