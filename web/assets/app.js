@@ -1,4 +1,123 @@
 const state = { info: null, settings: null, streams: [], auth: null, liveQuality: localStorage.getItem('localcam.liveQuality') || 'high' };
+const webrtcPeers = new Map();
+let webrtcGeneration = 0;
+
+function closeWebRTCFeeds() {
+  webrtcGeneration += 1;
+  for (const pc of webrtcPeers.values()) {
+    try { pc.close(); } catch {}
+  }
+  webrtcPeers.clear();
+}
+
+async function waitForIceGathering(pc) {
+  if (pc.iceGatheringState === 'complete') return;
+  await new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pc.removeEventListener('icegatheringstatechange', check);
+      resolve();
+    }, 3000);
+    function check() {
+      if (pc.iceGatheringState === 'complete') {
+        clearTimeout(timeout);
+        pc.removeEventListener('icegatheringstatechange', check);
+        resolve();
+      }
+    }
+    pc.addEventListener('icegatheringstatechange', check);
+  });
+}
+
+function newPeerId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return `localcam-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function connectWebRTC(stream, video, fallback, quality, generation) {
+  if (!window.RTCPeerConnection || generation !== webrtcGeneration) return false;
+  const peerId = newPeerId();
+  const pc = new RTCPeerConnection({ iceServers: [] });
+  webrtcPeers.set(peerId, pc);
+  pc.addTransceiver('video', { direction: 'recvonly' });
+  pc.addEventListener('track', (event) => {
+    const remote = event.streams?.[0];
+    if (remote) {
+      video.srcObject = remote;
+    } else {
+      const current = video.srcObject instanceof MediaStream ? video.srcObject : new MediaStream();
+      current.addTrack(event.track);
+      video.srcObject = current;
+    }
+  });
+  pc.addEventListener('connectionstatechange', () => {
+    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      if (video.srcObject) video.srcObject = null;
+      video.style.display = 'none';
+      fallback.style.display = '';
+      webrtcPeers.delete(peerId);
+    }
+  });
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitForIceGathering(pc);
+    if (generation !== webrtcGeneration) {
+      pc.close();
+      webrtcPeers.delete(peerId);
+      return false;
+    }
+    const answer = await api(`/api/webrtc/offer/${encodeURIComponent(stream.id)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        peer_id: peerId,
+        type: pc.localDescription?.type || 'offer',
+        sdp: pc.localDescription?.sdp || '',
+        quality
+      })
+    });
+    await pc.setRemoteDescription(answer);
+    if (generation !== webrtcGeneration) {
+      pc.close();
+      webrtcPeers.delete(peerId);
+      return false;
+    }
+    video.style.display = '';
+    fallback.style.display = 'none';
+    video.muted = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    await video.play().catch(() => {});
+    video.title = `WebRTC · ${quality}`;
+    return true;
+  } catch (error) {
+    try { pc.close(); } catch {}
+    webrtcPeers.delete(peerId);
+    video.srcObject = null;
+    video.style.display = 'none';
+    fallback.style.display = '';
+    if (generation === webrtcGeneration && !/WebRTC is unavailable/i.test(String(error.message || ''))) {
+      console.warn(`LocalCam WebRTC failed for ${stream.name}:`, error);
+    }
+    return false;
+  }
+}
+
+async function startWebRTCFeeds() {
+  const generation = ++webrtcGeneration;
+  const quality = selectedLiveQuality();
+  const cards = [...document.querySelectorAll('#cameraGrid .cam')];
+  for (const card of cards) {
+    if (generation !== webrtcGeneration) return;
+    const video = card.querySelector('.live-video');
+    const fallback = card.querySelector('.live-fallback');
+    if (!video || !fallback) continue;
+    const stream = state.streams.find((item) => String(item.id) === String(video.dataset.cameraId));
+    if (!stream) continue;
+    await connectWebRTC(stream, video, fallback, quality, generation);
+  }
+}
+
 window.localcamCanControl = () => {
   const role = state.auth?.user?.role;
   return role === 'admin' || role === 'operator';
@@ -169,6 +288,7 @@ function fillCameraSelects() {
 function selectedLiveQuality() { return state.liveQuality || 'high'; }
 
 function renderDashboard() {
+  closeWebRTCFeeds();
   const grid = $('cameraGrid');
   if (!state.streams.length) {
     grid.innerHTML = '<div class="panel"><h2>No cameras configured</h2><p class="hint">Open Settings → Cameras to add your first RTSP camera.</p></div>';
@@ -200,11 +320,12 @@ function renderDashboard() {
 
     return `<article class="cam">
       <div class="cam-head"><div class="cam-title">${esc(stream.name)}</div><span class="pill ${cls}">${badge}</span></div>
-      <div class="cam-body"><img src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay">RTSP · local LAN · audio</div></div>
+      <div class="cam-body"><video class="live-video" data-camera-id="${esc(stream.id)}" autoplay muted playsinline preload="none"></video><img class="live-fallback" src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay">RTSP · local LAN · audio</div></div>
       <div class="cam-foot"><span>${stream.online ? 'Connected' : 'Waiting for stream'}</span><div class="cam-actions"><button class="small-btn" data-action="snapshot" data-id="${esc(stream.id)}">Snapshot</button>${recordButton}</div></div>
       ${ptz}
     </article>`;
   }).join('');
+  startWebRTCFeeds();
 }
 
 function setupLiveQuality() {
