@@ -105,6 +105,7 @@
 
   function enhance(card) {
     const img = card.querySelector('.cam-body img');
+    const audio = card.querySelector('.live-audio');
     const body = card.querySelector('.cam-body');
     if (!img || !body || body.dataset.liveViewEnhanced) return;
     const id = getId(img);
@@ -155,11 +156,59 @@
     const status = document.createElement('span'); status.className='viewer-status'; status.dataset.viewerStatus='1';
     group.append(out, reset, into, full, status); toolbar.appendChild(group);
 
+    const audioGroup = document.createElement('div'); audioGroup.className='viewer-group audio-group';
+    const mute = document.createElement('button'); mute.type='button'; mute.className='viewer-btn'; mute.dataset.audioMute='1'; mute.textContent = audio?.muted ? 'Unmute' : 'Mute'; mute.title='Mute or unmute camera audio';
+    const volume = document.createElement('input'); volume.type='range'; volume.min='0'; volume.max='1'; volume.step='0.01'; volume.value=audio ? String(audio.volume || .8) : '0.8'; volume.className='viewer-volume'; volume.title='Camera volume';
+    if (audio) {
+      audio.volume = Number(volume.value);
+      audio.addEventListener('error', () => showToast('Live audio is unavailable for this camera.', 'error'), { once:true });
+      mute.addEventListener('click', async () => {
+        audio.muted = !audio.muted;
+        mute.textContent = audio.muted ? 'Unmute' : 'Mute';
+        if (!audio.muted) {
+          try { await audio.play(); } catch {}
+        }
+      });
+      volume.addEventListener('input', () => {
+        audio.volume = Number(volume.value);
+        if (audio.volume > 0 && audio.muted) {
+          audio.muted = false;
+          mute.textContent = 'Mute';
+          audio.play().catch(() => {});
+        }
+      });
+    } else {
+      mute.disabled = true; volume.disabled = true;
+    }
+    audioGroup.append(mute, volume);
+    group.appendChild(audioGroup);
+
+    const talk = document.createElement('button'); talk.type='button'; talk.className='viewer-btn'; talk.textContent='Talk'; talk.title='Hold to talk through the camera (ONVIF Profile T when supported)';
+    talk.dataset.talk='1';
+    group.appendChild(talk);
+
     if (ptzMap.get(id)) {
       const pad = document.createElement('div'); pad.className='viewer-pad';
       const moves=[['↖',-1,1],['↑',0,1],['↗',1,1],['←',-1,0],['⌂',0,0],['→',1,0],['↙',-1,-1],['↓',0,-1],['↘',1,-1]];
       for (const [label,pan,tilt] of moves) {
-        const b=document.createElement('button'); b.type='button'; b.className='viewer-btn'; b.textContent=label; b.dataset.ptz='1'; b.dataset.pan=pan; b.dataset.tilt=tilt; b.title=label==='⌂'?'Home':'Move camera'; pad.appendChild(b);
+        const b=document.createElement('button'); b.type='button'; b.className='viewer-btn'; b.textContent=label; b.dataset.ptz='1'; b.dataset.holdPtz='1'; b.dataset.pan=pan; b.dataset.tilt=tilt; b.title=label==='⌂'?'Home · click to return':'Hold to move camera'; pad.appendChild(b);
+        if (label !== '⌂') {
+          const start = async (e) => {
+            e.preventDefault();
+            try {
+              b.setPointerCapture?.(e.pointerId);
+              await apiControl(id, 'move', { pan:Number(pan), tilt:Number(tilt), zoom:0, seconds:0 });
+            } catch (error) { showToast(error.message || 'PTZ move failed.', 'error'); }
+          };
+          const stop = async (e) => {
+            e.preventDefault();
+            try { await apiControl(id, 'stop'); } catch {}
+          };
+          b.addEventListener('pointerdown', start);
+          b.addEventListener('pointerup', stop);
+          b.addEventListener('pointercancel', stop);
+          b.addEventListener('pointerleave', stop);
+        }
       }
       toolbar.appendChild(pad);
       const optical=document.createElement('div'); optical.className='viewer-group';
@@ -173,6 +222,22 @@
     note.textContent=ptzMap.get(id) ? 'Mouse wheel / +− = digital zoom · drag = digital pan · arrows = physical PTZ.' : 'Mouse wheel / +− = digital zoom · drag = digital pan. Enable ONVIF PTZ for physical movement.';
     toolbar.appendChild(note);
     body.appendChild(toolbar);
+
+    toolbar.addEventListener('pointerdown', (e) => {
+      const b = e.target.closest('[data-talk]');
+      if (!b || !window.localcamStartTalk) return;
+      e.preventDefault();
+      window.localcamStartTalk(id);
+    });
+    const endTalk = (e) => {
+      const b = e.target.closest?.('[data-talk]');
+      if (b && window.localcamStopTalk) {
+        e.preventDefault();
+        window.localcamStopTalk();
+      }
+    };
+    toolbar.addEventListener('pointerup', endTalk);
+    toolbar.addEventListener('pointercancel', endTalk);
 
     toolbar.addEventListener('click', async (e) => {
       const b=e.target.closest('button'); if(!b) return;
