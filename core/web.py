@@ -474,6 +474,7 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 'size': stat.st_size,
                 'size_human': human_bytes(stat.st_size),
                 'time': datetime.fromtimestamp(stat.st_mtime).strftime('%H:%M:%S'),
+                'path': str(path.resolve()),
             })
         results.sort(key=lambda row: row['id'], reverse=True)
         return results
@@ -481,14 +482,23 @@ class LocalCamHandler(BaseHTTPRequestHandler):
     def timeline(self, day, camera=''):
         rows = self.recordings({'date': [day], 'camera': [camera]})
         segments = []
-        minutes = int(self.server_app.cfg().get('segment_minutes', 10))
+        minutes = max(1, int(self.server_app.cfg().get('segment_minutes', 10)))
         for row in rows:
+            name = row['name']
+            match = __import__('re').search(r'(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})', name)
+            if not match:
+                continue
             try:
-                dt = datetime.strptime(row['name'][:19], '%Y-%m-%d_%H-%M-%S')
+                dt = datetime.strptime(match.group(1), '%Y-%m-%d_%H-%M-%S')
             except ValueError:
                 continue
-            end = datetime.fromtimestamp(dt.timestamp() + minutes * 60)
-            segments.append({'id': row['id'], 'camera': row['camera'], 'start': dt.isoformat(), 'end': end.isoformat()})
+            end = dt + __import__('datetime').timedelta(minutes=minutes)
+            segments.append({
+                'id': row['id'],
+                'camera': row['camera'],
+                'start': dt.isoformat(),
+                'end': end.isoformat(),
+            })
         return segments
 
     def media(self, q):
@@ -496,4 +506,67 @@ class LocalCamHandler(BaseHTTPRequestHandler):
         target = safe_join(root, (q.get('path') or [''])[0])
         if not target or not target.is_file():
             return self._error(404, 'Media not found')
-        return self._send_file(target, 'video/x-matroska')
+
+        # Keep MKV as the recording format, but remux it to fragmented MP4 for
+        # browser playback. This makes the Archive player work across browsers
+        # without rewriting or degrading the stored recording.
+        ffmpeg = self.server_app.cfg().get('ffmpeg_path', 'ffmpeg')
+        cmd = [
+            ffmpeg,
+            '-hide_banner',
+            '-loglevel', 'error',
+            '-i', str(target),
+            '-map', '0:v:0?',
+            '-map', '0:a:0?',
+            '-c:v', 'copy',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-avoid_negative_ts', 'make_zero',
+            '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+            '-f', 'mp4',
+            'pipe:1',
+        ]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                bufsize=64 * 1024,
+            )
+        except OSError as exc:
+            return self._error(500, f'Could not start archive playback: {exc}')
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'video/mp4')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+
+        try:
+            while True:
+                chunk = proc.stdout.read(64 * 1024) if proc.stdout else b''
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        finally:
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+            except OSError:
+                pass
+            proc.wait(timeout=3)
+
+        if proc.returncode not in (0, None) and not getattr(proc, 'returncode', None) in (-15,):
+            try:
+                err = proc.stderr.read().decode('utf-8', 'replace').strip() if proc.stderr else ''
+            except Exception:
+                err = ''
+            if err:
+                self.server_app.log(f'Archive playback failed: {err.splitlines()[-1]}')
