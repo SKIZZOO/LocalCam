@@ -47,6 +47,16 @@ if not exist config.json (
 )
 
 echo.
+where ffmpeg >nul 2>&1
+if errorlevel 1 (
+  echo WARNING: FFmpeg was not found on PATH.
+  echo LocalCam needs FFmpeg for camera streams and recording.
+  echo Install FFmpeg or set its executable path in config.json before starting.
+) else (
+  echo FFmpeg found on PATH.
+)
+
+echo.
 echo LocalCam dependencies installed successfully.
 echo Next: run run.bat, or install_service.bat from an Administrator terminal.
 pause
