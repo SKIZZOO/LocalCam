@@ -9,6 +9,17 @@ from typing import Any
 
 from core.rtsp import RTSP_AUTO_TRANSPORT, RTSP_USER_AGENT, with_credentials
 
+try:
+    from aiortc import AudioStreamTrack, VideoStreamTrack
+except Exception:  # Optional until dependency installation completes.
+    class VideoStreamTrack:  # type: ignore[no-redef]
+        def stop(self):
+            pass
+
+    class AudioStreamTrack:  # type: ignore[no-redef]
+        def stop(self):
+            pass
+
 
 QUALITY_PRESETS = {
     'low': {'width': 640, 'fps': 15},
@@ -18,14 +29,13 @@ QUALITY_PRESETS = {
 }
 
 
-class FFmpegVideoTrack:
+class FFmpegVideoTrack(VideoStreamTrack):
     """aiortc VideoStreamTrack backed by one low-latency FFmpeg RTSP decode."""
 
     def __init__(self, camera: dict[str, Any], ffmpeg: str, quality: str = 'high'):
-        from aiortc import VideoStreamTrack
         from av import VideoFrame
 
-        self._base = VideoStreamTrack()
+        super().__init__()
         self._VideoFrame = VideoFrame
         preset = QUALITY_PRESETS.get(str(quality).lower(), QUALITY_PRESETS['high'])
         self.width = int(preset['width'])
@@ -157,19 +167,17 @@ class FFmpegVideoTrack:
 
     def stop(self) -> None:
         self.close()
-        self._base.stop()
+        super().stop()
 
 
-class FFmpegAudioTrack:
+class FFmpegAudioTrack(AudioStreamTrack):
     """aiortc AudioStreamTrack backed by decoded 48 kHz mono PCM."""
 
     SAMPLES = 960
     BYTES = SAMPLES * 2
 
     def __init__(self, camera: dict[str, Any], ffmpeg: str):
-        from aiortc import AudioStreamTrack
-
-        self._base = AudioStreamTrack()
+        super().__init__()
         self.camera = camera
         self.ffmpeg = ffmpeg
         self.process: subprocess.Popen[bytes] | None = None
@@ -305,15 +313,29 @@ class WebRTCManager:
             await asyncio.sleep(0.05)
 
     async def _offer(self, peer_id: str, stream, offer_type: str, offer_sdp: str, quality: str):
-        from aiortc import RTCPeerConnection, RTCSessionDescription
+        from aiortc import RTCPeerConnection, RTCRtpSender, RTCSessionDescription
 
         pc = RTCPeerConnection()
         video = FFmpegVideoTrack(stream.camera, stream.cfg['ffmpeg_path'], quality)
         audio = None
-        pc.addTrack(video)
+        video_transceiver = pc.addTransceiver('video', direction='sendonly')
+        video_codecs = [
+            codec for codec in RTCRtpSender.getCapabilities('video').codecs
+            if codec.mimeType.lower() in ('video/h264', 'video/rtx')
+        ]
+        if video_codecs:
+            video_transceiver.setCodecPreferences(video_codecs)
+        await video_transceiver.sender.replaceTrack(video)
         try:
             audio = FFmpegAudioTrack(stream.camera, stream.cfg['ffmpeg_path'])
-            pc.addTrack(audio)
+            audio_transceiver = pc.addTransceiver('audio', direction='sendonly')
+            audio_codecs = [
+                codec for codec in RTCRtpSender.getCapabilities('audio').codecs
+                if codec.mimeType.lower() == 'audio/opus'
+            ]
+            if audio_codecs:
+                audio_transceiver.setCodecPreferences(audio_codecs)
+            await audio_transceiver.sender.replaceTrack(audio)
         except Exception as exc:
             self.logger(f'{stream.name}: WebRTC audio unavailable: {exc}')
 
