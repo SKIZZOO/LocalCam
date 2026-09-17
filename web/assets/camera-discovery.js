@@ -2,7 +2,7 @@
 (() => {
   const camerasTab = document.getElementById('tab-cameras');
   const cameraEditor = document.getElementById('cameraEditor');
-  if (!camerasTab || !cameraEditor || typeof window.api !== 'function') return;
+  if (!camerasTab || !cameraEditor || typeof api !== 'function') return;
 
   if (document.getElementById('cameraDiscovery')) return;
 
@@ -78,7 +78,7 @@
     results.replaceChildren();
     scanButton.disabled = true;
     try {
-      const data = await window.api('/api/camera-discovery', {
+      const data = await api('/api/camera-discovery', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({subnet})
