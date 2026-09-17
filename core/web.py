@@ -269,8 +269,9 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 return self._send_file(target, mimetypes.guess_type(target.name)[0] or 'application/octet-stream', target.name) if target and target.is_file() else self._error(404, 'File not found')
             if path == '/api/media':
                 return self.media(q)
-            if path.startswith('/live/') and path.endswith('.audio.mp4'):
-                sid = urllib.parse.unquote(path[6:-10])
+            if path.startswith('/live/') and (path.endswith('.audio.ogg') or path.endswith('.audio.mp4')):
+                suffix = '.audio.ogg' if path.endswith('.audio.ogg') else '.audio.mp4'
+                sid = urllib.parse.unquote(path[6:-len(suffix)])
                 stream = self.server_app.streams.get(sid)
                 return stream.live_audio(self) if stream else self._error(404, 'Stream not found')
             if path.startswith('/api/event-snapshot/'):
