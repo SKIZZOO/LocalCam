@@ -28,7 +28,7 @@ class Recorder:
     ) -> None:
         self.ffmpeg_path = ffmpeg_path
         self.root = root
-        # Keep test misconfiguration from generating dozens of tiny segments.
+        # Prevent accidental test settings from creating a large number of tiny files.
         self.segment_minutes = max(5, int(segment_minutes))
         self.min_free_gb = max(1, int(min_free_gb))
         self.retention_days = max(0, int(retention_days))
@@ -76,6 +76,11 @@ class Recorder:
 
             self.attempt_dir = day_dir
             self.attempt_started_files = {p.resolve() for p in day_dir.glob('*.mkv') if p.is_file()}
+            self.started_at = time.monotonic()
+            self.stop_requested = False
+            self.camera_id = camera_id
+            self.camera_name = camera_name
+            self.url = url
 
             cmd = [
                 self.ffmpeg_path,
@@ -111,12 +116,6 @@ class Recorder:
                 pattern,
             ]
 
-            self.camera_id = camera_id
-            self.camera_name = camera_name
-            self.url = url
-            self.stop_requested = False
-            self.started_at = time.monotonic()
-
             try:
                 proc = subprocess.Popen(
                     cmd,
@@ -143,6 +142,7 @@ class Recorder:
     def stop(self) -> None:
         with self.lock:
             proc = self.process
+            elapsed = time.monotonic() - self.started_at if self.started_at else 0
             self.process = None
             self.stop_requested = True
 
@@ -156,7 +156,7 @@ class Recorder:
                 proc.kill()
             except OSError:
                 pass
-        self._cleanup_failed_attempts(force=True)
+        self._cleanup_failed_attempts(short_attempt=elapsed < 8)
 
     def _read_stderr(self, proc: subprocess.Popen[str]) -> None:
         if not proc.stderr:
@@ -177,25 +177,22 @@ class Recorder:
             if self.process is proc:
                 self.process = None
         if elapsed < 8:
-            self._cleanup_failed_attempts(force=True)
+            self._cleanup_failed_attempts(short_attempt=True)
         if not self.stop_requested and code not in (0, 15, -15):
             self.on_log(f'{self.camera_name}: FFmpeg exited with code {code}; the controller will reconnect.')
 
-    def _cleanup_failed_attempts(self, force: bool = False) -> None:
-        """Remove empty/partial files left by a connection attempt that ended quickly."""
+    def _cleanup_failed_attempts(self, short_attempt: bool) -> None:
+        """Remove empty artifacts and tiny files created by failed RTSP attempts."""
         if not self.attempt_dir or not self.attempt_dir.exists():
             self.attempt_started_files.clear()
-            return
-        started = self.started_at or time.monotonic()
-        short_attempt = force or (time.monotonic() - started < 8)
-        if not short_attempt:
             return
         for path in self.attempt_dir.glob('*.mkv'):
             try:
                 resolved = path.resolve()
                 stat = path.stat()
-                new_file = resolved not in self.attempt_started_files
-                if new_file and (stat.st_size == 0 or stat.st_size < 1024 * 1024):
+                if resolved in self.attempt_started_files:
+                    continue
+                if stat.st_size == 0 or (short_attempt and stat.st_size < 1024 * 1024):
                     path.unlink()
             except OSError:
                 pass
