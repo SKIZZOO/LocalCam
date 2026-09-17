@@ -4,27 +4,29 @@
   const cameraEditor = document.getElementById('cameraEditor');
   if (!camerasTab || !cameraEditor || typeof api !== 'function') return;
 
-  if (document.getElementById('cameraDiscovery')) return;
+  let panel = document.getElementById('cameraDiscovery');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'cameraDiscovery';
+    panel.className = 'discovery-card';
+    camerasTab.querySelector('.panel')?.insertBefore(panel, cameraEditor);
+  }
 
-  const panel = document.createElement('div');
-  panel.id = 'cameraDiscovery';
-  panel.className = 'panel';
   panel.innerHTML = `
-    <div class="panel-head">
+    <div class="discovery-head">
       <div>
         <h3>Find cameras on your network</h3>
-        <p class="hint">Scan a private IPv4 subnet for common RTSP ports. Open ports are candidates only; the exact RTSP path still depends on the camera.</p>
+        <p class="hint">Scan a private IPv4 subnet for common RTSP ports. An open port only identifies a possible RTSP service; you still need the correct RTSP path and credentials.</p>
       </div>
       <span class="pill">LAN</span>
     </div>
-    <div class="create-user">
-      <label>Local subnet<input id="discoverySubnet" placeholder="192.168.1.0/24" autocomplete="off"></label>
-      <button class="button secondary" id="discoverCameras" type="button">Scan network</button>
+    <div class="discovery-actions">
+      <label class="grow">Local subnet<input id="discoverySubnet" placeholder="192.168.1.0/24" autocomplete="off"></label>
+      <button class="button primary" id="discoverCameras" type="button">Scan network</button>
     </div>
-    <p id="discoveryStatus" class="muted" aria-live="polite"></p>
-    <div id="discoveryResults"></div>
+    <p id="discoveryStatus" class="muted" aria-live="polite">Ready to scan.</p>
+    <div id="discoveryResults" class="discovery-results"></div>
   `;
-  camerasTab.querySelector('.panel')?.insertBefore(panel, cameraEditor);
 
   const subnetInput = document.getElementById('discoverySubnet');
   const scanButton = document.getElementById('discoverCameras');
@@ -37,17 +39,12 @@
     subnetInput.value = `${parts.slice(0, 3).join('.')}.0/24`;
   }
 
-  const addResult = (item) => {
+  function addResult(item) {
     const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.style.justifyContent = 'space-between';
-    row.style.gap = '12px';
-    row.style.padding = '10px 0';
-    row.style.borderTop = '1px solid rgba(255,255,255,.08)';
+    row.className = 'discovery-result';
 
-    const label = document.createElement('span');
-    label.textContent = `${item.host}:${item.port}`;
+    const info = document.createElement('div');
+    info.innerHTML = `<strong>${item.host}:${item.port}</strong><small>RTSP service candidate</small>`;
 
     const use = document.createElement('button');
     use.type = 'button';
@@ -60,21 +57,25 @@
       const last = blocks[blocks.length - 1];
       const url = last?.querySelector('[data-k="url"]');
       if (!url) {
-        status.textContent = 'Camera editor is not ready. Open Settings → Cameras and try again.';
+        status.textContent = 'Camera editor is not ready. Click Add camera first.';
         return;
       }
       url.value = `rtsp://${item.host}:${item.port}/`;
       url.focus();
-      status.textContent = `Added ${item.host}:${item.port}. Enter the correct RTSP path and credentials, then use Test RTSP.`;
+      status.textContent = `Added ${item.host}:${item.port}. Enter the camera's RTSP path and credentials, then test the stream.`;
     });
 
-    row.append(label, use);
+    row.append(info, use);
     results.appendChild(row);
-  };
+  }
 
   scanButton.addEventListener('click', async () => {
     const subnet = subnetInput.value.trim();
-    status.textContent = 'Scanning…';
+    if (!subnet) {
+      status.textContent = 'Enter a private IPv4 subnet, for example 192.168.1.0/24.';
+      return;
+    }
+    status.textContent = 'Scanning the LAN…';
     results.replaceChildren();
     scanButton.disabled = true;
     try {
@@ -83,9 +84,9 @@
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({subnet})
       });
-      status.textContent = `Checked ${data.scanned_addresses} addresses on ports ${data.ports.join(', ')}. Open ports are candidates only.`;
+      status.textContent = `Checked ${data.scanned_addresses} addresses on ports ${data.ports.join(', ')}.`;
       if (!data.results.length) {
-        results.textContent = 'No open RTSP ports found. Check the subnet, camera power, and network/VLAN settings.';
+        results.innerHTML = '<div class="muted">No open RTSP ports found. Check the subnet, camera power, firewall, or VLAN settings.</div>';
         return;
       }
       data.results.forEach(addResult);
