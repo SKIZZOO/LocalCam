@@ -111,8 +111,8 @@ class FFmpegVideoTrack(VideoStreamTrack):
         if not line.startswith(b'YUV4MPEG2'):
             raise RuntimeError('FFmpeg did not produce a YUV4MPEG video stream')
         self.header = line.decode('ascii', 'replace')
-        width = re.search(r'\\bW(\\d+)\\b', self.header)
-        height = re.search(r'\\bH(\\d+)\\b', self.header)
+        width = re.search(r'\bW(\d+)\b', self.header)
+        height = re.search(r'\bH(\d+)\b', self.header)
         if not width or not height:
             raise RuntimeError('Live video dimensions were not reported by FFmpeg')
         self.width = int(width.group(1))
@@ -276,7 +276,7 @@ class FFmpegAudioTrack(AudioStreamTrack):
 
     def stop(self) -> None:
         self.close()
-        self._base.stop()
+        super().stop()
 
 
 class WebRTCManager:
