@@ -351,10 +351,10 @@ class StreamState:
         except ValueError:
             return str(path)
 
-    def start_recording(self):
+    def start_recording(self, force=False):
         if self.recorder and self.recorder.running:
             return True
-        if time.time() < self.record_retry_at:
+        if not force and time.time() < self.record_retry_at:
             return False
         self.record_retry_at = time.time() + 15
         self.recorder = Recorder(
@@ -466,8 +466,13 @@ class LocalCamServer:
                 # manual mode is the safe default.
                 if mode == 'continuous':
                     s.start_recording()
-                elif mode == 'manual':
-                    s.stop_recording()
+                elif mode == 'motion':
+                    if s.motion_active:
+                        s.start_recording()
+                    else:
+                        s.stop_recording()
+                # Manual recording is controlled exclusively by the dashboard
+                # toggle; never stop it from the background controller.
             time.sleep(5)
 
     def _maintenance(self):
