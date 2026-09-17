@@ -1,6 +1,6 @@
 {
   "app_name": "LocalCam",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "ffmpeg_path": "ffmpeg",
   "record_root": "G:/LocalCam/recordings",
   "snapshot_root": "G:/LocalCam/snapshots",
@@ -11,49 +11,54 @@
   "web_enabled": true,
   "web_bind": "0.0.0.0",
   "web_port": 8765,
-  "web_live_fps": 6,
-  "web_live_width": 960,
-  "web_auto_open": true,
+  "web_live_fps": 8,
+  "web_live_width": 1280,
   "web_auth_enabled": true,
   "notifications_enabled": true,
   "web_password_hash": "",
   "web_secret": "",
+  "web_session_hours": 12,
+  "service_name": "LocalCamService",
   "motion": {
     "enabled": true,
-    "interval_seconds": 0.75,
+    "interval_seconds": 0.5,
     "threshold": 8.0,
     "min_changed_fraction": 0.012,
-    "cooldown_seconds": 15,
+    "cooldown_seconds": 15.0,
     "save_event_snapshots": true
+  },
+  "ptz_defaults": {
+    "enabled": false,
+    "port": 80
   },
   "cameras": [
     {
-      "id": "front-wide",
-      "name": "Front - Wide",
+      "id": "front-left",
+      "name": "Front - Lens 1",
       "url": "rtsp://CAMERA_IP:554/live/ch00_0",
       "username": "admin",
-      "password": ""
+      "password": "",
+      "ptz": {
+        "enabled": false,
+        "host": "",
+        "port": 80,
+        "username": "",
+        "password": ""
+      }
     },
     {
-      "id": "front-detail",
-      "name": "Front - Detail",
+      "id": "front-right",
+      "name": "Front - Lens 2",
       "url": "rtsp://CAMERA_IP:554/live/ch01_0",
       "username": "admin",
-      "password": ""
-    },
-    {
-      "id": "camera-2-main",
-      "name": "Camera 2 - Main",
-      "url": "rtsp://CAMERA_IP:554/live/ch00_0",
-      "username": "admin",
-      "password": ""
-    },
-    {
-      "id": "camera-2-detail",
-      "name": "Camera 2 - Detail",
-      "url": "rtsp://CAMERA_IP:554/live/ch01_0",
-      "username": "admin",
-      "password": ""
+      "password": "",
+      "ptz": {
+        "enabled": false,
+        "host": "",
+        "port": 80,
+        "username": "",
+        "password": ""
+      }
     }
   ]
 }
