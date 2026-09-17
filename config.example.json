@@ -13,6 +13,7 @@
   "web_port": 8765,
   "web_live_fps": 8,
   "web_live_width": 1280,
+  "web_auto_open": true,
   "web_auth_enabled": true,
   "notifications_enabled": true,
   "web_password_hash": "",
