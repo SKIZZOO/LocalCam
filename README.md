@@ -11,30 +11,32 @@ LocalCam provides a modern browser dashboard for live monitoring, recording, mot
 - Continuous, motion-only, and manual recording modes
 - Configurable recording segments
 - Automatic retention cleanup and minimum-free-space protection
-- 24-hour archive timeline
+- 24-hour archive timeline with click-to-play segments
 - Date/camera/search filters
-- Browser playback with on-demand MP4 remux/transcode
+- Browser playback with on-demand MP4 conversion
 - Download individual recording segments
 - Motion events stored in SQLite
 - Event snapshots stored locally
+- Event acknowledgement
 - Camera health and RTSP connectivity probes
 - Local web login with PBKDF2 password hashing
 - Responsive interface for desktop and mobile
-- Configurable storage paths, FFmpeg path, server port/bind, live quality, motion sensitivity, cameras, and credentials
 - Browser notifications for new motion events
+- Configurable storage paths, FFmpeg path, server port/bind, live quality, motion sensitivity, cameras, and credentials
+- Optional Windows startup task for a dedicated NVR PC
 - No cloud dependency for the RTSP workflows
 - No camera passwords committed to Git
 
-## Current tested camera pattern
+## RTSP paths
 
-The project is compatible with RTSP URLs like:
+The project supports RTSP URLs such as:
 
 ```text
 rtsp://CAMERA_IP:554/live/ch00_0
 rtsp://CAMERA_IP:554/live/ch01_0
 ```
 
-The example configuration intentionally contains placeholders. Put your real LAN camera addresses and RTSP credentials into the local `config.json` only.
+The example configuration intentionally contains placeholders. Put real LAN camera addresses and RTSP credentials into the local `config.json` only.
 
 ## Requirements
 
@@ -52,12 +54,13 @@ VLC is not required for the web application because live preview and recording a
 2. Run `run.bat`.
 3. Open the displayed local URL.
 4. On first launch, create the LocalCam web password.
-5. Open **Settings** and configure your cameras and recording folder.
+5. Open **Settings** and configure your camera streams and recording folder.
 
-For the development setup, recordings can be stored under:
+A typical storage layout is:
 
 ```text
 G:\LocalCam\recordings
+G:\LocalCam\snapshots
 ```
 
 Do not commit `config.json` after entering passwords.
@@ -73,6 +76,20 @@ http://PC_LAN_IP:8765/
 If Windows Firewall blocks access, run `allow_web_firewall.bat` once as Administrator and keep the network profile Private.
 
 Do not port-forward the LocalCam port to the public internet. For remote access, use a VPN.
+
+## Automatic startup
+
+For a dedicated NVR PC, install the optional startup task:
+
+```text
+install_startup_task.bat
+```
+
+To remove it later, run:
+
+```text
+remove_startup_task.bat
+```
 
 ## Build a standalone EXE
 
@@ -98,7 +115,7 @@ RTSP cameras
       v
  LocalCam threaded web server
       |
-      +--> local authentication / settings / archive APIs
+      +--> authentication / settings / archive / health APIs
 ```
 
 ## Security
