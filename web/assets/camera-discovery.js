@@ -56,6 +56,127 @@
     });
   }
 
+  function feedLabel(url) {
+    const match = String(url || '').match(/ch(\\d+)_(\\d+)/i);
+    if (!match) return 'Discovered feed';
+    const channel = Number(match[1]) + 1;
+    const stream = match[2] === '0' ? 'Main' : 'Sub';
+    return `Channel ${channel} · ${stream}`;
+  }
+
+  function renderDetectedFeeds(block, streams, primary) {
+    const existing = results.querySelector('.detected-feeds');
+    existing?.remove();
+    if (!streams?.length) return;
+
+    const box = document.createElement('div');
+    box.className = 'detected-feeds';
+    box.innerHTML = `
+      <div class="detected-feeds-head">
+        <div><strong>Feed preview</strong><span>${streams.length} working feed${streams.length === 1 ? '' : 's'} found</span></div>
+      </div>
+    `;
+
+    streams.forEach((feed, index) => {
+      const card = document.createElement('div');
+      card.className = 'detected-feed';
+      const preview = feed.preview
+        ? `<img src="data:${feed.preview_mime || 'image/jpeg'};base64,${feed.preview}" alt="${feedLabel(feed.suggested_url)} preview">`
+        : '<div class="discovery-preview-empty">Preview unavailable</div>';
+      card.innerHTML = `
+        <div class="discovery-preview">${preview}</div>
+        <div class="discovery-feed-info">
+          <strong>${index === 0 ? 'Selected feed' : feedLabel(feed.suggested_url)}</strong>
+          <small>${esc(feed.suggested_url || feed.url || '')}</small>
+          <small>${esc(String(feed.method || 'RTSP'))} · ${esc(String(feed.transport || '').toUpperCase())}</small>
+        </div>
+      `;
+      box.appendChild(card);
+    });
+
+    const extras = streams.slice(1).filter((feed) => feed.suggested_url && feed.suggested_url !== primary.suggested_url);
+    if (extras.length) {
+      const ask = document.createElement('div');
+      ask.className = 'discovery-add-question';
+      const checks = extras.map((feed, i) => `
+        <label class="detected-choice">
+          <input type="checkbox" data-add-feed="${i}" checked>
+          <span><b>${esc(feedLabel(feed.suggested_url))}</b><small>${esc(feed.suggested_url)}</small></span>
+        </label>`).join('');
+      ask.innerHTML = `
+        <div>
+          <strong>This camera exposes additional feeds</strong>
+          <p class="hint">Would you like to add the other working feeds as separate cameras too?</p>
+        </div>
+        <div class="detected-choices">${checks}</div>
+        <div class="row-actions">
+          <button type="button" class="button primary" data-add-detected>Yes, add selected</button>
+          <button type="button" class="button ghost" data-dismiss-detected>Not now</button>
+        </div>
+      `;
+      ask.querySelector('[data-add-detected]')?.addEventListener('click', () => {
+        const picked = extras.filter((_, i) => ask.querySelector(`[data-add-feed="${i}"]`)?.checked);
+        if (!picked.length) {
+          status.textContent = 'No additional feeds were selected.';
+          return;
+        }
+        addDetectedFeeds(block, picked);
+        ask.remove();
+      });
+      ask.querySelector('[data-dismiss-detected]')?.addEventListener('click', () => {
+        ask.remove();
+        status.textContent = 'Additional feeds left untouched. You can re-run detection later.';
+      });
+      box.appendChild(ask);
+    }
+
+    results.prepend(box);
+  }
+
+  function addDetectedFeeds(block, feeds) {
+    if (!window.state || !state.settings) {
+      showToast('Camera settings are still loading. Try again in a moment.', 'error');
+      return;
+    }
+    const current = collectCameras();
+    const sourceIndex = Number(block.dataset.index);
+    const source = current[sourceIndex] || current[0];
+    if (!source) return;
+
+    const existingUrls = new Set(current.map((camera) => camera.url));
+    const existingIds = new Set(current.map((camera) => camera.id));
+    let added = 0;
+
+    feeds.forEach((feed) => {
+      const url = String(feed.suggested_url || '').trim();
+      if (!url || existingUrls.has(url)) return;
+      const label = feedLabel(url).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `feed-${added + 1}`;
+      const baseId = `${source.id}-${label}`;
+      let id = baseId;
+      let n = 2;
+      while (existingIds.has(id)) id = `${baseId}-${n++}`;
+      const copy = {
+        ...source,
+        id,
+        name: `${source.name} · ${feedLabel(url)}`,
+        url,
+        ptz: { ...(source.ptz || {}) }
+      };
+      current.push(copy);
+      existingUrls.add(url);
+      existingIds.add(id);
+      added += 1;
+    });
+
+    state.settings.cameras = current;
+    renderCameraEditor(state.settings.cameras);
+    ensureAutoButtons();
+    status.textContent = added
+      ? `Added ${added} additional feed${added === 1 ? '' : 's'}. Click Save settings to activate them.`
+      : 'Those feeds are already in the camera list.';
+    showToast(added ? `Added ${added} additional camera feed${added === 1 ? '' : 's'}.` : 'Feeds are already configured.', added ? 'success' : 'info');
+  }
+
   async function autoDetect(button) {
     const block = cameraBlock(button);
     if (!block) return;
@@ -74,7 +195,7 @@
     button.disabled = true;
     const oldText = button.textContent;
     button.textContent = 'Detecting…';
-    status.textContent = 'Testing RTSP, then checking ONVIF and common stream paths…';
+    status.textContent = 'Testing RTSP, checking ch00/ch01 feeds, and capturing previews…';
     try {
       const data = await api('/api/camera-assist', {
         method: 'POST',
@@ -84,10 +205,15 @@
       if (!data.ok) {
         throw new Error(data.error || 'No usable RTSP stream was found.');
       }
-      urlField.value = data.suggested_url || data.url || url;
+      const streams = data.streams?.length ? data.streams : [data];
+      const primary = streams[0];
+      urlField.value = primary.suggested_url || primary.url || url;
       urlField.focus();
-      status.textContent = `RTSP stream found via ${data.method || 'camera probing'} using ${String(data.transport || '').toUpperCase()}. Click Save settings to keep it.`;
-      showToast(`RTSP stream found via ${data.method || 'camera probing'}.`, 'success');
+      renderDetectedFeeds(block, streams, primary);
+      status.textContent = streams.length > 1
+        ? `Found ${streams.length} working feeds. The first one is selected above.`
+        : `RTSP stream found via ${data.method || 'camera probing'} using ${String(data.transport || '').toUpperCase()}.`;
+      showToast(`Found ${streams.length} working camera feed${streams.length === 1 ? '' : 's'}.`, 'success');
     } catch (error) {
       status.textContent = error?.message || 'RTSP auto-detection failed.';
       showToast(error?.message || 'RTSP auto-detection failed.', 'error');
