@@ -387,9 +387,12 @@ class LocalCamServer:
         while self.httpd:
             mode = self.cfg().get('record_mode')
             for s in list(self.streams.values()):
+                # Browser navigation/refresh must never be able to start recording.
+                # Only the explicit continuous mode is allowed to auto-start it;
+                # manual mode is the safe default.
                 if mode == 'continuous':
                     s.start_recording()
-                elif mode != 'motion':
+                elif mode == 'manual':
                     s.stop_recording()
             time.sleep(5)
 
