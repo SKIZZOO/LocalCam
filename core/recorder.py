@@ -65,7 +65,9 @@ class Recorder:
                 RTSP_AUTO_TRANSPORT,
                 '-user_agent',
                 RTSP_USER_AGENT,
-                '-rw_timeout',
+                # Use the RTSP demuxer's timeout option. Older Windows FFmpeg
+                # builds used by LocalCam may reject the generic -rw_timeout.
+                '-timeout',
                 '15000000',
                 '-i',
                 target,
