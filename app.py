@@ -8,6 +8,7 @@ from pathlib import Path
 
 from core.config import load_config
 from core.nvr import LocalCamServer
+from core.preview import install_preview_tuning
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -15,6 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
     config = load_config()
+    install_preview_tuning()
     server = LocalCamServer(BASE_DIR)
     server.start()
 
