@@ -16,7 +16,7 @@ import core.nvr as nvr
 from core.process_guard import install_kill_on_exit_job
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = '0.9.5'
+APP_VERSION = '0.10.1'
 
 
 class QuietConsoleStream:
