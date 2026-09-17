@@ -203,13 +203,17 @@ class Recorder:
             return
 
         cutoff = time.time() - self.retention_days * 86400 if self.retention_days else None
-        if cutoff:
-            for path in self.root.rglob('*.mkv'):
-                try:
-                    if path.stat().st_mtime < cutoff:
-                        path.unlink()
-                except OSError:
-                    pass
+        for path in self.root.rglob('*.mkv'):
+            try:
+                stat = path.stat()
+                # Remove zero-byte files and very small failed connection artifacts.
+                # A normal NVR segment after several minutes is comfortably larger.
+                if stat.st_size < 1024 * 1024 and not cutoff:
+                    path.unlink()
+                elif cutoff and stat.st_mtime < cutoff:
+                    path.unlink()
+            except OSError:
+                pass
 
         try:
             usage = shutil.disk_usage(self.root.anchor or self.root)
