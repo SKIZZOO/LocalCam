@@ -5,6 +5,9 @@ import http.cookies
 import json
 import mimetypes
 import os
+import ipaddress
+import socket
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import shutil
 import subprocess
 import urllib.parse
@@ -145,6 +148,30 @@ class LocalCamHandler(BaseHTTPRequestHandler):
         if not self.server_app.session(self):return self._error(401,'Authentication required')
         try:
             if p=='/api/auth/logout':self._logout();return
+            if p=='/api/camera-discovery':
+                if not self.server_app.role(self,'admin'):return self._error(403,'Admin role required')
+                x=self._body()
+                try:
+                    network=ipaddress.ip_network(str(x.get('subnet','')).strip(), strict=False)
+                    if network.version != 4 or not network.is_private or network.num_addresses > 256:
+                        return self._error(400,'Enter a private IPv4 subnet with no more than 256 addresses (for example, 192.168.1.0/24).')
+                    hosts=list(network.hosts())
+                    ports=(554,8554,10554)
+                    targets=[(str(host),port) for host in hosts for port in ports]
+                    found=[]
+                    def probe(target):
+                        host,port=target
+                        try:
+                            with socket.create_connection((host,port),timeout=0.35): return {'host':host,'port':port}
+                        except OSError:return None
+                    with ThreadPoolExecutor(max_workers=48) as pool:
+                        for future in as_completed([pool.submit(probe,t) for t in targets]):
+                            result=future.result()
+                            if result:found.append(result)
+                    found.sort(key=lambda r:(ipaddress.ip_address(r['host']),r['port']))
+                    return self._json({'results':found,'scanned_addresses':len(hosts),'ports':list(ports)})
+                except ValueError:
+                    return self._error(400,'Enter a valid private IPv4 subnet, such as 192.168.1.0/24.')
             if p=='/api/settings':
                 if not self.server_app.role(self,'admin'):return self._error(403,'Admin role required')
                 return self._json(self.server_app.save_settings(self._body()))
