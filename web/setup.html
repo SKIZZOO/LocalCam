@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LocalCam Setup</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <div class="logo">LOCAL<span>CAM</span><small>NVR</small></div>
+    <h1>First-run setup</h1>
+    <p>Create the local web password that protects the LocalCam dashboard.</p>
+    <form id="form">
+      <input id="password" type="password" placeholder="New password (8+ characters)" autocomplete="new-password" autofocus>
+      <button class="button primary">Create password</button>
+    </form>
+    <div id="msg" class="error"></div>
+  </div>
+  <script>
+    const form = document.getElementById('form');
+    const password = document.getElementById('password');
+    const message = document.getElementById('msg');
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      message.textContent = '';
+      const response = await fetch('/api/auth/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: password.value })
+      });
+      if (response.ok) {
+        location.href = '/';
+      } else {
+        const data = await response.json().catch(() => ({}));
+        message.textContent = data.error || 'Setup failed.';
+      }
+    });
+  </script>
+</body>
+</html>
