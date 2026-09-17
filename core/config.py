@@ -3,7 +3,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import secrets
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +58,36 @@ def merge_defaults(defaults: dict[str, Any], data: dict[str, Any]) -> dict[str, 
     return result
 
 
+def resolve_ffmpeg(value: str | None) -> str:
+    """Return a runnable FFmpeg path when it is available.
+
+    Config normally stores just ``ffmpeg`` so Windows package-manager installs can
+    be picked up automatically after PATH changes.  We resolve that command at
+    runtime instead of passing a missing executable name directly to Popen.
+    """
+    configured = os.path.expandvars(os.path.expanduser(str(value or 'ffmpeg').strip())) or 'ffmpeg'
+
+    direct = Path(configured)
+    try:
+        if direct.is_file():
+            return str(direct.resolve())
+    except OSError:
+        pass
+
+    found = shutil.which(configured)
+    if found:
+        return found
+
+    # A custom path may be stale after an FFmpeg reinstall. Fall back to the
+    # normal executable name before reporting the original configured value.
+    if configured.lower() != 'ffmpeg':
+        found = shutil.which('ffmpeg') or shutil.which('ffmpeg.exe')
+        if found:
+            return found
+
+    return configured
+
+
 def hash_password(password: str, salt: str | None = None, iterations: int = 390_000) -> str:
     salt = salt or secrets.token_hex(16)
     derived = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), iterations)
@@ -98,7 +130,9 @@ def ensure_config() -> dict[str, Any]:
 
 
 def load_config() -> dict[str, Any]:
-    return ensure_config()
+    cfg = ensure_config()
+    cfg['ffmpeg_path'] = resolve_ffmpeg(cfg.get('ffmpeg_path'))
+    return cfg
 
 
 def save_config(config: dict[str, Any]) -> None:
