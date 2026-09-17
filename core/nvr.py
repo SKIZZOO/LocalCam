@@ -53,7 +53,26 @@ def quality_rtsp_url(url: str, quality: str) -> str:
     source = str(url or '').strip()
 
     # XMEye/iCSee-style paths: /live/ch00_0 (main) and /live/ch00_1 (substream).
-    match = re.search(r'(/live/ch\\d+_)(\\d+)(\\.sdp)?def lan_ip() -> str:
+    match = re.search(r'(/live/ch\\d+_)(\\d+)(\\.sdp)?$', source, re.IGNORECASE)
+    if match:
+        stream_index = '1' if quality == 'low' else '0'
+        return source[:match.start(2)] + stream_index + (match.group(3) or '')
+
+    # V380-style URLs: ...&stream=0.sdp (main) / ...&stream=1.sdp (substream).
+    stream_match = re.search(r'([?&]stream=)(\\d+)(\\.sdp)?$', source, re.IGNORECASE)
+    if stream_match:
+        stream_index = '1' if quality == 'low' else '0'
+        return source[:stream_match.start(2)] + stream_index + (stream_match.group(3) or '')
+
+    # Query-string variant used by some firmware.
+    query_match = re.search(r'([?&]substream=)(\\d+)', source, re.IGNORECASE)
+    if query_match:
+        stream_index = '1' if quality == 'low' else '0'
+        return source[:query_match.start(2)] + stream_index + source[query_match.end(2):]
+
+    return source
+
+def lan_ip() -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.connect(('192.0.2.1', 80))
