@@ -1,19 +1,21 @@
 {
   "web_host": "0.0.0.0",
   "web_port": 8765,
+  "ffmpeg_path": "ffmpeg",
   "record_root": "G:/CAM720/recordings",
   "snapshot_root": "G:/CAM720/snapshots",
   "record_mode": "continuous",
   "segment_minutes": 10,
   "min_free_gb": 20,
   "retention_days": 30,
+  "web_live_fps": 4,
+  "web_live_width": 640,
   "motion": {
-    "enabled": false,
+    "enabled": true,
     "interval_seconds": 1.0,
     "threshold": 12.0,
     "min_changed_fraction": 0.02,
     "cooldown_seconds": 15.0,
-    "prebuffer_seconds": 0,
     "resolution": 320
   },
   "cameras": [
