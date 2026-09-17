@@ -332,14 +332,13 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
 
     base = _candidate_base(original)
     if base:
-        # Always test all four channel variants. Some cameras expose a second
-        # feed as ch01_0/ch01_1 even when ch00_0 or ch00_1 is already working.
-        channels = [(candidate, 'channel stream') for candidate in _channel_candidates(base)]
-        for start in range(0, len(channels), 4):
-            batch = channels[start:start + 4]
+        # Test every channel/stream variant separately. _probe_batch stops on
+        # the first success in a batch, so channel candidates are intentionally
+        # probed one at a time here to discover all usable feeds.
+        for candidate, method in [(base + path, 'channel stream') for path in CHANNEL_RTSP_PATHS]:
             result, checked = _probe_batch(
                 ffmpeg_path,
-                batch,
+                [(candidate, method)],
                 username,
                 password,
                 timeout_seconds,
@@ -349,22 +348,6 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
             )
             if result:
                 found_streams.append(result)
-                # _probe_batch returns after its first success. Probe the rest
-                # individually below so we can report every usable channel.
-                remaining = [item for item in batch if item[0] not in seen]
-                for candidate, method in remaining:
-                    single, checked = _probe_batch(
-                        ffmpeg_path,
-                        [(candidate, method)],
-                        username,
-                        password,
-                        timeout_seconds,
-                        seen,
-                        failures,
-                        checked,
-                    )
-                    if single:
-                        found_streams.append(single)
 
         common = [(base + path, 'common path') for path in COMMON_RTSP_PATHS if base + path not in seen]
         for start in range(0, len(common), 4):
@@ -380,6 +363,7 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
             )
             if result:
                 found_streams.append(result)
+
 
     # ONVIF is a final fallback because WSDL/SOAP setup can be substantially slower.
     onvif = [(uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password)]
