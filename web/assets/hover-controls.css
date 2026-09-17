@@ -1,0 +1,33 @@
+/* Keep live feeds clean until a user points at a feed or tabs into its controls. */
+.cam .cam-foot .cam-actions,
+.cam .viewer-toolbar {
+  opacity:  0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 140ms ease, visibility 140ms ease;
+}
+.cam:hover .cam-foot .cam-actions,
+.cam:focus-within .cam-foot .cam-actions,
+.cam:hover .viewer-toolbar,
+.cam:focus-within .viewer-toolbar {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* Preserve access on touch devices, where hover is not available. */
+@media (hover: none), (pointer: coarse) {
+  .cam .cam-foot .cam-actions,
+  .cam .viewer-toolbar {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cam .cam-foot .cam-actions,
+  .cam .viewer-toolbar {
+    transition: none;
+  }
+}
