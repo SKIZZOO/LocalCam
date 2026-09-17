@@ -47,3 +47,13 @@
 .viewer-btn:focus-visible,.icon-btn:focus-visible,.small-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media(max-width:1150px){.archive-filters{grid-template-columns:repeat(3,minmax(120px,1fr))}.editor-grid{grid-template-columns:1fr 1fr}.editor-actions{grid-column:1/-1;justify-content:flex-start}}
 @media(max-width:760px){.archive-filters{grid-template-columns:1fr 1fr}.quick-picks{grid-column:1/-1;justify-content:flex-start}.editor-grid{grid-template-columns:1fr}.editor-actions{grid-column:auto}}
+
+/* Recording toggle */
+.record-switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.record-switch input{position:absolute;opacity:0;pointer-events:none}
+.record-slider{position:relative;width:42px;height:24px;border-radius:999px;background:#253247;border:1px solid rgba(255,255,255,.12);transition:.18s ease;flex:0 0 auto}
+.record-slider::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#c8d2df;transition:.18s ease;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.record-switch input:checked + .record-slider{background:rgba(53,211,159,.28);border-color:rgba(53,211,159,.55)}
+.record-switch input:checked + .record-slider::after{transform:translateX(18px);background:#35d39f}
+.record-switch-label{font-size:11px;color:var(--muted);min-width:54px}
+.record-switch:hover .record-slider{border-color:rgba(119,167,255,.5)}
