@@ -5,6 +5,9 @@
 
   const viewers = new Map();
   let ptzMap = new Map();
+  let refreshInFlight = false;
+  let refreshTimer = null;
+  let refreshInterval = null;
 
   const style = document.createElement('style');
   style.textContent = `
@@ -190,12 +193,31 @@
   }
 
   async function refresh() {
-    await refreshPtz();
-    grid.querySelectorAll('.cam').forEach(enhance);
+    if (document.hidden || refreshInFlight) return;
+    refreshInFlight = true;
+    try {
+      await refreshPtz();
+      grid.querySelectorAll('.cam').forEach(enhance);
+    } finally {
+      refreshInFlight = false;
+    }
   }
 
-  new MutationObserver(() => refresh()).observe(grid, { childList:true, subtree:true });
+  const scheduleRefresh = () => {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => refresh(), 300);
+  };
+
+  new MutationObserver(() => scheduleRefresh()).observe(grid, { childList:true, subtree:true });
   window.addEventListener('resize', () => viewers.forEach(apply));
-  setInterval(refresh, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refresh();
+  });
+  refreshInterval = setInterval(refresh, 15000);
   refresh();
+
+  window.addEventListener('beforeunload', () => {
+    clearInterval(refreshInterval);
+    clearTimeout(refreshTimer);
+  });
 })();
