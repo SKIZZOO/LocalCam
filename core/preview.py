@@ -11,9 +11,17 @@ from .rtsp import RTSP_AUTO_TRANSPORT, RTSP_USER_AGENT, with_credentials
 class FastPreviewWorker:
     """Low-latency MJPEG preview worker tuned for RTSP cameras that work in VLC."""
 
-    def __init__(self, ffmpeg, url, username, password, width, fps, on_frame):
-        fps = max(1, min(15, int(fps)))
-        width = max(320, min(2560, int(width)))
+    QUALITY_PRESETS = {
+        'low': {'width': 640, 'fps': 10, 'quality': 6},
+        'medium': {'width': 1280, 'fps': 15, 'quality': 4},
+        'high': {'width': 1920, 'fps': 20, 'quality': 2},
+        'ultra': {'width': 2560, 'fps': 25, 'quality': 1},
+    }
+
+    def __init__(self, ffmpeg, url, username, password, width, fps, on_frame, quality='high'):
+        preset = self.QUALITY_PRESETS.get(str(quality).lower(), self.QUALITY_PRESETS['high'])
+        fps = max(1, min(int(fps or preset['fps']), preset['fps']))
+        width = max(320, min(int(width or preset['width']), preset['width']))
         target = with_credentials(url, username, password)
         self.cmd = [
             ffmpeg,
@@ -38,9 +46,9 @@ class FastPreviewWorker:
             target,
             '-an',
             '-vf',
-            f'scale={width}:-2:flags=lanczos,fps={fps}',
+            f'scale={width}:-2:flags=lanczos,fps={fps}:round=near',
             '-q:v',
-            '2',
+            str(preset['quality']),
             '-pix_fmt',
             'yuvj420p',
             '-f',
