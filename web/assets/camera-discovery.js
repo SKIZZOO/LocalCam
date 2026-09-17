@@ -67,14 +67,14 @@
 
     if (!urlField) return;
     if (!url) {
-      status.textContent = 'Enter the camera IP/RTSP address first, for example rtsp://192.168.1.50:554/. '; 
+      status.textContent = 'Enter the camera IP/RTSP address first, for example rtsp://192.168.1.50:554/.';
       return;
     }
 
     button.disabled = true;
     const oldText = button.textContent;
     button.textContent = 'Detecting…';
-    status.textContent = 'Trying ONVIF media profiles and common RTSP stream paths…';
+    status.textContent = 'Testing RTSP, then checking ONVIF and common stream paths…';
     try {
       const data = await api('/api/camera-assist', {
         method: 'POST',
@@ -87,8 +87,10 @@
       urlField.value = data.suggested_url || data.url || url;
       urlField.focus();
       status.textContent = `RTSP stream found via ${data.method || 'camera probing'} using ${String(data.transport || '').toUpperCase()}. Click Save settings to keep it.`;
+      showToast(`RTSP stream found via ${data.method || 'camera probing'}.`, 'success');
     } catch (error) {
       status.textContent = error?.message || 'RTSP auto-detection failed.';
+      showToast(error?.message || 'RTSP auto-detection failed.', 'error');
     } finally {
       button.disabled = false;
       button.textContent = oldText;
@@ -130,13 +132,11 @@
     detect.className = 'button ghost';
     detect.textContent = 'Find stream';
     detect.addEventListener('click', async () => {
-      const blocks = [...document.querySelectorAll('#cameraEditor .camera-block')];
-      const last = blocks[blocks.length - 1];
-      if (!last) {
-        const addButton = document.getElementById('addCamera');
-        addButton?.click();
+      let target = [...document.querySelectorAll('#cameraEditor .camera-block')].at(-1);
+      if (!target) {
+        document.getElementById('addCamera')?.click();
+        target = [...document.querySelectorAll('#cameraEditor .camera-block')].at(-1);
       }
-      const target = [...document.querySelectorAll('#cameraEditor .camera-block')].at(-1);
       const url = target?.querySelector('[data-k="url"]');
       if (!target || !url) return;
       url.value = `rtsp://${item.host}:${item.port}/`;
@@ -150,11 +150,21 @@
     results.appendChild(row);
   }
 
+  // Handle both the explicit Auto-detect button and the existing Test RTSP
+  // button. Capture phase runs before app.js's normal Test RTSP handler, so
+  // testing a root URL automatically invokes the path assistant instead of
+  // returning the known-invalid result for rtsp://HOST:554/.
   cameraEditor.addEventListener('click', async (event) => {
-    const button = event.target.closest('[data-auto-rtsp]');
+    const autoButton = event.target.closest('[data-auto-rtsp]');
+    const testButton = event.target.closest('[data-test-camera]');
+    const button = autoButton || testButton;
     if (!button) return;
+    if (testButton) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
     await autoDetect(button);
-  });
+  }, true);
 
   new MutationObserver(ensureAutoButtons).observe(cameraEditor, { childList: true, subtree: true });
   ensureAutoButtons();
