@@ -18,14 +18,14 @@ from core.db import EventStore
 from core.motion import MotionDetector
 from core.ptz import PTZController
 from core.recorder import Recorder
-from core.rtsp import RTSP_AUTO_TRANSPORT, with_credentials
+from core.rtsp import RTSP_AUTO_TRANSPORT, RTSP_USER_AGENT, with_credentials
 
 try:
     import psutil
 except ImportError:
     psutil = None
 
-APP_VERSION = '0.7.1'
+APP_VERSION = '0.9.3'
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -55,10 +55,35 @@ def lan_ip() -> str:
 
 class PreviewWorker:
     def __init__(self, ffmpeg, url, username, password, width, fps, on_frame):
+        # Keep preview's FFmpeg RTSP invocation aligned with the recorder,
+        # which is now confirmed working with this camera URL.
         self.cmd = [
-            ffmpeg, '-hide_banner', '-loglevel', 'error', '-rtsp_transport', RTSP_AUTO_TRANSPORT,
-            '-rw_timeout', '15000000', '-i', with_credentials(url, username, password),
-            '-an', '-vf', f'scale={width}:-2,fps={fps}', '-q:v', '5', '-f', 'mjpeg', 'pipe:1'
+            ffmpeg,
+            '-hide_banner',
+            '-loglevel',
+            'warning',
+            '-rtsp_transport',
+            RTSP_AUTO_TRANSPORT,
+            '-user_agent',
+            RTSP_USER_AGENT,
+            '-allowed_media_types',
+            'video',
+            '-timeout',
+            '15000000',
+            '-probesize',
+            '5000000',
+            '-analyzeduration',
+            '2000000',
+            '-i',
+            with_credentials(url, username, password),
+            '-an',
+            '-vf',
+            f'scale={width}:-2,fps={fps}',
+            '-q:v',
+            '5',
+            '-f',
+            'mjpeg',
+            'pipe:1',
         ]
         self.on_frame = on_frame
         self.proc = None
