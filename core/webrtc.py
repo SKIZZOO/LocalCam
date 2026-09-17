@@ -30,22 +30,22 @@ QUALITY_PRESETS = {
 
 
 class FFmpegVideoTrack(VideoStreamTrack):
-    """aiortc VideoStreamTrack backed by a low-latency FFmpeg RTSP decode."""
+    """aiortc VideoStreamTrack backed by a low-latency FFmpeg MJPEG decode."""
 
     def __init__(self, camera: dict[str, Any], ffmpeg: str, quality: str = 'high'):
-        from av import VideoFrame
+        import av
 
         super().__init__()
-        self._VideoFrame = VideoFrame
+        self._av = av
         preset = QUALITY_PRESETS.get(str(quality).lower(), QUALITY_PRESETS['high'])
         self.width = int(preset['width'])
         self.fps = int(preset['fps'])
+        self.quality = int(preset.get('quality', 2))
         self.camera = camera
         self.ffmpeg = ffmpeg
         self.process: subprocess.Popen[bytes] | None = None
         self.stdout = None
-        self.frame_size = self.width * ((self.width * 9 + 15) // 16) * 3 // 2
-        self.height = 0
+        self.decoder = av.CodecContext.create('mjpeg', 'r')
         self.pts = 0
         self.lock = threading.RLock()
         self._start_process()
@@ -64,7 +64,7 @@ class FFmpegVideoTrack(VideoStreamTrack):
             cmd = [
                 self.ffmpeg,
                 '-hide_banner',
-                '-loglevel', 'warning',
+                '-loglevel', 'error',
                 '-rtsp_transport', RTSP_AUTO_TRANSPORT,
                 '-user_agent', RTSP_USER_AGENT,
                 '-timeout', '15000000',
@@ -76,62 +76,57 @@ class FFmpegVideoTrack(VideoStreamTrack):
                 '-map', '0:v:0',
                 '-an',
                 '-vf', f'scale={self.width}:-2:flags=lanczos,fps={self.fps}:round=near',
-                '-pix_fmt', 'yuv420p',
-                '-f', 'rawvideo',
+                '-q:v', str(self.quality),
+                '-f', 'mjpeg',
                 'pipe:1',
             ]
             self.process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
                 bufsize=0,
             )
             self.stdout = self.process.stdout
-            self.frame_size = 0
-            self.height = 0
             self.pts = 0
-            threading.Thread(target=self._log_errors, args=(self.process,), daemon=True, name='localcam-webrtc-video-log').start()
 
-    def _log_errors(self, proc):
-        if not proc.stderr:
-            return
-        for line in proc.stderr:
-            line = line.decode('utf-8', 'replace').strip()
-            if line:
-                self.camera and None
-                # The caller's logger is intentionally not available here; FFmpeg
-                # stderr is consumed so a dead/blocked stderr pipe cannot stall output.
-        try:
-            proc.stderr.close()
-        except Exception:
-            pass
-
-    def _read_exact(self, size: int) -> bytes:
+    @staticmethod
+    def _read_jpeg(stream) -> bytes:
         data = bytearray()
-        while len(data) < size:
-            chunk = self.stdout.read(size - len(data)) if self.stdout else b''
+        while True:
+            chunk = stream.read(8192)
             if not chunk:
                 raise EOFError('RTSP video stream ended')
             data.extend(chunk)
-        return bytes(data)
+            if len(data) >= 2 and data[-2:] == b'\xff\xd8':
+                # SOI cannot occur at the end of the initial chunk in a normal
+                # MJPEG frame, so keep reading. This branch is retained for
+                # malformed/truncated packet boundaries.
+                pass
+            start = data.find(b'\xff\xd8')
+            if start >= 0:
+                data = data[start:]
+                break
+            if len(data) > 8_000_000:
+                raise RuntimeError('Live JPEG frame is unexpectedly large')
+        while True:
+            chunk = stream.read(8192)
+            if not chunk:
+                raise EOFError('RTSP video stream ended')
+            data.extend(chunk)
+            end = data.find(b'\xff\xd9')
+            if end >= 0:
+                return bytes(data[:end + 2])
+            if len(data) > 8_000_000:
+                raise RuntimeError('Live JPEG frame is unexpectedly large')
 
     def _read_frame(self):
-        if not self.frame_size:
-            # Height is even and matches FFmpeg's yuv420p output. Because scale=-2
-            # rounds the height to the input aspect ratio, infer it from the first
-            # frame is not possible from rawvideo; use 16:9, which matches the
-            # camera stream family used by the project.
-            self.height = max(2, (self.width * 9 // 16) // 2 * 2)
-            self.frame_size = self.width * self.height * 3 // 2
-        raw = self._read_exact(self.frame_size)
-        frame = self._VideoFrame(self.width, self.height, 'yuv420p')
-        y = self.width * self.height
-        uv = (self.width // 2) * (self.height // 2)
-        frame.planes[0].update(raw[:y])
-        frame.planes[1].update(raw[y:y + uv])
-        frame.planes[2].update(raw[y + uv:y + uv + uv])
+        jpeg = self._read_jpeg(self.stdout)
+        frames = self.decoder.decode(self._av.Packet(jpeg))
+        if not frames:
+            raise RuntimeError('FFmpeg returned an undecodable JPEG frame')
+        frame = frames[-1].reformat(format='yuv420p')
         frame.pts = self.pts
         frame.time_base = Fraction(1, 90000)
         self.pts += max(1, round(90000 / self.fps))
@@ -140,13 +135,10 @@ class FFmpegVideoTrack(VideoStreamTrack):
     async def recv(self):
         try:
             return await asyncio.to_thread(self._read_frame)
-        except Exception as exc:
+        except Exception:
             self.close()
             self._start_process()
-            try:
-                return await asyncio.to_thread(self._read_frame)
-            except Exception as retry_exc:
-                raise RuntimeError(f'Live WebRTC video failed: {retry_exc}') from retry_exc
+            return await asyncio.to_thread(self._read_frame)
 
     def close(self) -> None:
         with self.lock:
