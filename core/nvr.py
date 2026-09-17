@@ -177,6 +177,7 @@ class StreamState:
         self.event_id = None
         self.last_motion = 0.0
         self.last_error = ''
+        self.record_retry_at = 0.0
         self._start()
 
     @property
@@ -279,6 +280,8 @@ class StreamState:
     def start_recording(self):
         if self.recorder and self.recorder.running:
             return True
+        if time.time() < self.record_retry_at:
+            return False
         self.recorder = Recorder(
             self.cfg['ffmpeg_path'],
             Path(self.cfg['record_root']),
@@ -292,6 +295,9 @@ class StreamState:
         ok = self.recorder.start(self.id, self.name, self.camera['url'])
         if not ok:
             self.last_error = 'Recording could not be started'
+            self.record_retry_at = time.time() + 15
+        else:
+            self.record_retry_at = 0.0
         return ok
 
     def stop_recording(self):
