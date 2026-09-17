@@ -17,6 +17,13 @@ RTSP_USER_AGENT = 'LibVLC/3.0.21 (LIVE555 Streaming Media)'
 
 # Common paths used when ONVIF cannot provide a URI. /live/ch00_0 is a common
 # main-stream path on several low-cost camera families, so it is tested first.
+CHANNEL_RTSP_PATHS = (
+    '/live/ch00_0',
+    '/live/ch00_1',
+    '/live/ch01_0',
+    '/live/ch01_1',
+)
+
 COMMON_RTSP_PATHS = (
     '/live/ch00_0',
     '/live/ch00_1',
@@ -244,6 +251,53 @@ def _probe_batch(ffmpeg_path: str, candidates: list[tuple[str, str]], username: 
     return None, checked
 
 
+def snapshot_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
+                 timeout_seconds: int = 5) -> dict[str, Any]:
+    target = with_credentials(url, username, password)
+    errors: list[str] = []
+    for transport in RTSP_TRANSPORTS:
+        cmd = [
+            ffmpeg_path, '-hide_banner', '-loglevel', 'error',
+            '-rtsp_transport', transport,
+            '-user_agent', RTSP_USER_AGENT,
+            '-timeout', str(timeout_seconds * 1_000_000),
+            '-probesize', '3000000',
+            '-analyzeduration', '1000000',
+            '-i', target,
+            '-map', '0:v:0',
+            '-an',
+            '-frames:v', '1',
+            '-q:v', '4',
+            '-f', 'mjpeg',
+            'pipe:1',
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout_seconds + 3,
+            )
+        except FileNotFoundError:
+            return {'ok': False, 'error': 'FFmpeg executable not found'}
+        except subprocess.TimeoutExpired:
+            errors.append(f'{transport.upper()}: snapshot timed out')
+            continue
+        if proc.returncode == 0 and proc.stdout:
+            return {
+                'ok': True,
+                'mime': 'image/jpeg',
+                'data': __import__('base64').b64encode(proc.stdout).decode('ascii'),
+            }
+        if proc.stderr:
+            errors.append(proc.stderr.decode('utf-8', 'replace').strip().splitlines()[-1])
+    return {'ok': False, 'error': '\n'.join(e for e in errors if e) or 'Could not capture a snapshot.'}
+
+
+def _channel_candidates(base: str) -> list[str]:
+    return [base + path for path in CHANNEL_RTSP_PATHS]
+
+
 def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
                            timeout_seconds: int = 2) -> dict[str, Any]:
     original = url.strip()
@@ -258,6 +312,7 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
     seen: set[str] = set()
     failures: list[str] = []
     checked = 0
+    found_streams: list[dict[str, Any]] = []
 
     # Always test an explicitly configured media URL first. This is important
     # when a user has already verified the exact URL in VLC.
@@ -273,11 +328,45 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
             checked,
         )
         if result:
-            return result
+            found_streams.append(result)
 
     base = _candidate_base(original)
     if base:
-        common = [(base + path, 'common path') for path in COMMON_RTSP_PATHS]
+        # Always test all four channel variants. Some cameras expose a second
+        # feed as ch01_0/ch01_1 even when ch00_0 or ch00_1 is already working.
+        channels = [(candidate, 'channel stream') for candidate in _channel_candidates(base)]
+        for start in range(0, len(channels), 4):
+            batch = channels[start:start + 4]
+            result, checked = _probe_batch(
+                ffmpeg_path,
+                batch,
+                username,
+                password,
+                timeout_seconds,
+                seen,
+                failures,
+                checked,
+            )
+            if result:
+                found_streams.append(result)
+                # _probe_batch returns after its first success. Probe the rest
+                # individually below so we can report every usable channel.
+                remaining = [item for item in batch if item[0] not in seen]
+                for candidate, method in remaining:
+                    single, checked = _probe_batch(
+                        ffmpeg_path,
+                        [(candidate, method)],
+                        username,
+                        password,
+                        timeout_seconds,
+                        seen,
+                        failures,
+                        checked,
+                    )
+                    if single:
+                        found_streams.append(single)
+
+        common = [(base + path, 'common path') for path in COMMON_RTSP_PATHS if base + path not in seen]
         for start in range(0, len(common), 4):
             result, checked = _probe_batch(
                 ffmpeg_path,
@@ -290,7 +379,7 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
                 checked,
             )
             if result:
-                return result
+                found_streams.append(result)
 
     # ONVIF is a final fallback because WSDL/SOAP setup can be substantially slower.
     onvif = [(uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password)]
@@ -306,7 +395,26 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
             checked,
         )
         if result:
-            return result
+            found_streams.append(result)
+
+    # De-duplicate successful URLs and attach a small preview image for the UI.
+    unique: list[dict[str, Any]] = []
+    seen_success: set[str] = set()
+    for item in found_streams:
+        candidate = str(item.get('suggested_url') or item.get('url') or '')
+        if not candidate or candidate in seen_success:
+            continue
+        seen_success.add(candidate)
+        snap = snapshot_rtsp(ffmpeg_path, candidate, username, password, min(5, max(2, timeout_seconds + 1)))
+        item = dict(item)
+        item['preview'] = snap.get('data', '')
+        item['preview_mime'] = snap.get('mime', '')
+        unique.append(item)
+
+    if unique:
+        primary = dict(unique[0])
+        primary['streams'] = unique
+        return primary
 
     shown = failures[:12]
     if len(failures) > 12:
