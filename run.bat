@@ -6,7 +6,7 @@ title LocalCam Launcher
 set "ROOT=%~dp0"
 set "VENV=%ROOT%.venv\Scripts\python.exe"
 set "SYSTEM_PY="
-set "UI_VERSION=0.8.1"
+set "UI_VERSION=0.9.0"
 
 where py >nul 2>&1
 if not errorlevel 1 set "SYSTEM_PY=py -3"
@@ -38,7 +38,11 @@ echo.
 
 findstr /C:"/assets/app.css?v=%UI_VERSION%" "%ROOT%web\login.html" >nul 2>&1
 if errorlevel 1 goto :stale_project
+findstr /C:"/assets/app.css?v=%UI_VERSION%" "%ROOT%web\setup.html" >nul 2>&1
+if errorlevel 1 goto :stale_project
 findstr /C:"/assets/app.css?v=%UI_VERSION%" "%ROOT%web\index.html" >nul 2>&1
+if errorlevel 1 goto :stale_project
+findstr /C:"/assets/app.js?v=%UI_VERSION%" "%ROOT%web\index.html" >nul 2>&1
 if errorlevel 1 goto :stale_project
 
 if not exist "%VENV%" (
@@ -91,7 +95,7 @@ if errorlevel 1 (
   where winget >nul 2>&1
   if not errorlevel 1 (
     choice /C YN /N /M "Install FFmpeg with Windows winget now? [Y/N] "
-    if not errorlevel 1 (
+    if not errorlevel 2 (
       winget install --id Gyan.FFmpeg.Shared --exact --accept-package-agreements --accept-source-agreements
       if errorlevel 1 echo FFmpeg installation was not completed. Install it manually and add it to PATH.
     )
@@ -180,11 +184,12 @@ exit /b 1
 
 :stale_project
 echo.
-echo This LocalCam folder contains an older web UI.
+echo This LocalCam folder contains an older or mixed web UI.
 echo Expected web UI version: %UI_VERSION%
 echo.
-echo Replace this project folder with the latest copy from GitHub.
-echo Your .venv, config.json, database and recordings can be kept separately.
+echo The launcher stopped before starting the server so old files cannot be mixed with the current backend.
+echo Download the current main branch and replace the project files.
+echo Keep these separately: .venv, config.json, localcam.sqlite3, recordings and snapshots.
 pause
 exit /b 1
 
