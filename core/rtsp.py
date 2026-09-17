@@ -10,9 +10,12 @@ from urllib.parse import quote, urlsplit, urlunsplit
 RTSP_AUTO_TRANSPORT = 'udp'
 RTSP_TRANSPORTS = ('udp', 'tcp')
 
-# Conservative, vendor-neutral paths used only when ONVIF cannot provide a URI.
+# Common paths used when ONVIF cannot provide a URI. The /live/ch00_0 path is
+# included first because it is a known working pattern for this LocalCam camera.
 # A candidate is accepted only when FFmpeg can actually read media from it.
 COMMON_RTSP_PATHS = (
+    '/live/ch00_0',
+    '/live/ch00_1',
     '/stream1',
     '/stream2',
     '/live',
@@ -202,7 +205,7 @@ def discover_and_test_rtsp(
     if _looks_like_root_path(original):
         base = _candidate_base(original)
         if base:
-            candidates.extend((base + path, 'common path') for path in COMMON_RTSP_PATHS)
+            candidates.extend((base + path, 'known/common path') for path in COMMON_RTSP_PATHS)
     else:
         candidates.append((original, 'configured URL'))
 
