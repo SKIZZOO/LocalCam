@@ -49,7 +49,7 @@ def with_credentials(url: str, username: str, password: str) -> str:
 
 
 def redact_rtsp_url(url: str) -> str:
-    """Remove username/password from an RTSP URL for safe logs and UI errors."""
+    """Remove username/password from RTSP URLs before returning them to the UI."""
     try:
         parsed = urlsplit(url)
         if parsed.scheme.lower() != 'rtsp' or '@' not in parsed.netloc:
@@ -67,9 +67,7 @@ def _candidate_base(url: str) -> str | None:
         parsed = urlsplit(url)
         if parsed.scheme.lower() != 'rtsp' or not parsed.hostname:
             return None
-        host = parsed.hostname
-        port = parsed.port or 554
-        return f'rtsp://{host}:{port}'
+        return f'rtsp://{parsed.hostname}:{parsed.port or 554}'
     except ValueError:
         return None
 
@@ -116,42 +114,7 @@ def _onvif_stream_uris(host: str, username: str, password: str, ports=(80, 8080,
     return found
 
 
-def discover_rtsp_candidates(
-    url: str,
-    username: str,
-    password: str,
-    include_common_paths: bool = True,
-) -> list[str]:
-    """Return likely RTSP URLs, preferring ONVIF media-profile URIs."""
-    candidates: list[str] = []
-    try:
-        parsed = urlsplit(url)
-        host = parsed.hostname or ''
-    except ValueError:
-        return candidates
-    if not host:
-        return candidates
-
-    for uri in _onvif_stream_uris(host, username, password):
-        if uri not in candidates:
-            candidates.append(uri)
-
-    if include_common_paths:
-        base = _candidate_base(url)
-        if base:
-            for path in COMMON_RTSP_PATHS:
-                candidate = base + path
-                if candidate not in candidates:
-                    candidates.append(candidate)
-    return candidates
-
-
-def _run_probe(
-    ffmpeg_path: str,
-    target: str,
-    transport: str,
-    timeout_seconds: int,
-) -> tuple[bool, str]:
+def _run_probe(ffmpeg_path: str, target: str, transport: str, timeout_seconds: int) -> tuple[bool, str]:
     cmd = [
         ffmpeg_path,
         '-hide_banner',
@@ -203,12 +166,7 @@ def test_rtsp(
     for transport in RTSP_TRANSPORTS:
         ok, error = _run_probe(ffmpeg_path, target, transport, timeout_seconds)
         if ok:
-            return {
-                'ok': True,
-                'error': '',
-                'transport': transport,
-                'url': redact_rtsp_url(target),
-            }
+            return {'ok': True, 'error': '', 'transport': transport, 'url': redact_rtsp_url(target)}
         if error:
             errors.append(f'{transport.upper()}: {error}')
 
@@ -229,20 +187,33 @@ def discover_and_test_rtsp(
 ) -> dict[str, Any]:
     """Find and validate a usable RTSP URL using ONVIF and common paths."""
     original = url.strip()
-    candidates = []
+    try:
+        parsed = urlsplit(original)
+        host = parsed.hostname or ''
+    except ValueError:
+        return {'ok': False, 'error': 'Invalid RTSP URL.'}
+
+    if not host:
+        return {'ok': False, 'error': 'Camera host/IP is required.'}
+
+    onvif_candidates = _onvif_stream_uris(host, username, password) if _looks_like_root_path(original) else []
+    candidates: list[tuple[str, str]] = [(uri, 'ONVIF') for uri in onvif_candidates]
+
     if _looks_like_root_path(original):
-        candidates.extend(discover_rtsp_candidates(original, username, password, include_common_paths=True))
+        base = _candidate_base(original)
+        if base:
+            candidates.extend((base + path, 'common path') for path in COMMON_RTSP_PATHS)
     else:
-        candidates.append(original)
+        candidates.append((original, 'configured URL'))
 
-    # Deduplicate while preserving ONVIF-first order.
-    unique: list[str] = []
-    for candidate in candidates:
-        if candidate not in unique:
-            unique.append(candidate)
-
+    seen: set[str] = set()
     failures: list[str] = []
-    for candidate in unique:
+    checked = 0
+    for candidate, method in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        checked += 1
         result = test_rtsp(ffmpeg_path, candidate, username, password, timeout_seconds)
         if result.get('ok'):
             return {
@@ -250,18 +221,16 @@ def discover_and_test_rtsp(
                 'url': redact_rtsp_url(candidate),
                 'suggested_url': candidate,
                 'transport': result.get('transport', ''),
-                'method': 'ONVIF' if candidate in _onvif_stream_uris((urlsplit(candidate).hostname or ''), username, password) else 'candidate',
+                'method': method,
+                'candidates_checked': checked,
             }
         error = str(result.get('error', '')).splitlines()[-1:]
         if error:
             failures.append(f'{redact_rtsp_url(candidate)}: {error[0]}')
 
-    if not unique:
-        failures.append('No ONVIF stream profiles or common RTSP paths were found.')
-
     return {
         'ok': False,
         'url': redact_rtsp_url(original),
         'error': '\n'.join(failures[-8:]) or 'No usable RTSP stream was found.',
-        'candidates_checked': len(unique),
+        'candidates_checked': checked,
     }
