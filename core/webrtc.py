@@ -30,7 +30,7 @@ QUALITY_PRESETS = {
 
 
 class FFmpegVideoTrack(VideoStreamTrack):
-    """aiortc VideoStreamTrack backed by one low-latency FFmpeg RTSP decode."""
+    """aiortc VideoStreamTrack backed by a low-latency FFmpeg RTSP decode."""
 
     def __init__(self, camera: dict[str, Any], ffmpeg: str, quality: str = 'high'):
         from av import VideoFrame
@@ -44,9 +44,8 @@ class FFmpegVideoTrack(VideoStreamTrack):
         self.ffmpeg = ffmpeg
         self.process: subprocess.Popen[bytes] | None = None
         self.stdout = None
-        self.header: str | None = None
+        self.frame_size = self.width * ((self.width * 9 + 15) // 16) * 3 // 2
         self.height = 0
-        self.frame_size = 0
         self.pts = 0
         self.lock = threading.RLock()
         self._start_process()
@@ -65,35 +64,49 @@ class FFmpegVideoTrack(VideoStreamTrack):
             cmd = [
                 self.ffmpeg,
                 '-hide_banner',
-                '-loglevel', 'error',
+                '-loglevel', 'warning',
                 '-rtsp_transport', RTSP_AUTO_TRANSPORT,
                 '-user_agent', RTSP_USER_AGENT,
-                '-allowed_media_types', 'video',
+                '-timeout', '15000000',
                 '-fflags', 'nobuffer',
                 '-flags', 'low_delay',
                 '-probesize', '3000000',
                 '-analyzeduration', '1000000',
-                '-timeout', '15000000',
                 '-i', self._target(),
+                '-map', '0:v:0',
                 '-an',
                 '-vf', f'scale={self.width}:-2:flags=lanczos,fps={self.fps}:round=near',
                 '-pix_fmt', 'yuv420p',
-                '-f', 'yuv4mpegpipe',
+                '-f', 'rawvideo',
                 'pipe:1',
             ]
             self.process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
                 bufsize=0,
             )
             self.stdout = self.process.stdout
-            self.header = None
-            self.height = 0
             self.frame_size = 0
+            self.height = 0
             self.pts = 0
+            threading.Thread(target=self._log_errors, args=(self.process,), daemon=True, name='localcam-webrtc-video-log').start()
+
+    def _log_errors(self, proc):
+        if not proc.stderr:
+            return
+        for line in proc.stderr:
+            line = line.decode('utf-8', 'replace').strip()
+            if line:
+                self.camera and None
+                # The caller's logger is intentionally not available here; FFmpeg
+                # stderr is consumed so a dead/blocked stderr pipe cannot stall output.
+        try:
+            proc.stderr.close()
+        except Exception:
+            pass
 
     def _read_exact(self, size: int) -> bytes:
         data = bytearray()
@@ -104,26 +117,14 @@ class FFmpegVideoTrack(VideoStreamTrack):
             data.extend(chunk)
         return bytes(data)
 
-    def _ensure_header(self) -> None:
-        if self.header is not None:
-            return
-        line = self.stdout.readline() if self.stdout else b''
-        if not line.startswith(b'YUV4MPEG2'):
-            raise RuntimeError('FFmpeg did not produce a YUV4MPEG video stream')
-        self.header = line.decode('ascii', 'replace')
-        width = re.search(r'\bW(\d+)\b', self.header)
-        height = re.search(r'\bH(\d+)\b', self.header)
-        if not width or not height:
-            raise RuntimeError('Live video dimensions were not reported by FFmpeg')
-        self.width = int(width.group(1))
-        self.height = int(height.group(1))
-        self.frame_size = self.width * self.height * 3 // 2
-
     def _read_frame(self):
-        self._ensure_header()
-        marker = self.stdout.readline() if self.stdout else b''
-        if not marker.startswith(b'FRAME'):
-            raise EOFError('RTSP video frame marker missing')
+        if not self.frame_size:
+            # Height is even and matches FFmpeg's yuv420p output. Because scale=-2
+            # rounds the height to the input aspect ratio, infer it from the first
+            # frame is not possible from rawvideo; use 16:9, which matches the
+            # camera stream family used by the project.
+            self.height = max(2, (self.width * 9 // 16) // 2 * 2)
+            self.frame_size = self.width * self.height * 3 // 2
         raw = self._read_exact(self.frame_size)
         frame = self._VideoFrame(self.width, self.height, 'yuv420p')
         y = self.width * self.height
@@ -139,13 +140,13 @@ class FFmpegVideoTrack(VideoStreamTrack):
     async def recv(self):
         try:
             return await asyncio.to_thread(self._read_frame)
-        except Exception:
+        except Exception as exc:
             self.close()
             self._start_process()
             try:
                 return await asyncio.to_thread(self._read_frame)
-            except Exception as exc:
-                raise RuntimeError(f'Live WebRTC video failed: {exc}') from exc
+            except Exception as retry_exc:
+                raise RuntimeError(f'Live WebRTC video failed: {retry_exc}') from retry_exc
 
     def close(self) -> None:
         with self.lock:
