@@ -86,7 +86,7 @@ class Recorder:
                 self.ffmpeg_path,
                 '-hide_banner',
                 '-loglevel',
-                'warning',
+                'error',
                 '-rtsp_transport',
                 RTSP_AUTO_TRANSPORT,
                 '-user_agent',
