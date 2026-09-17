@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -15,6 +16,10 @@ RTSP_TRANSPORTS = ('tcp', 'udp')
 COMMON_RTSP_PATHS = (
     '/live/ch00_0',
     '/live/ch00_1',
+    '/live/profile0',
+    '/live/profile1',
+    '/live/profile100',
+    '/live/profile101',
     '/live/ch01_0',
     '/live/ch01_1',
     '/onvif1',
@@ -150,28 +155,57 @@ def test_rtsp(ffmpeg_path: str, url: str, username: str, password: str, timeout_
     return {'ok': False, 'error': '\n'.join(errors), 'transport': 'TCP, then UDP', 'url': redact_rtsp_url(target)}
 
 
-def _probe_candidates(ffmpeg_path: str, candidates: list[tuple[str, str]], username: str, password: str,
-                      timeout_seconds: int, seen: set[str], failures: list[str], checked: int,
-                      priority_timeout: int | None = None) -> tuple[dict[str, Any] | None, int]:
-    for index, (candidate, method) in enumerate(candidates):
-        if candidate in seen:
-            continue
+def _failure_for(candidate: str, result: dict[str, Any]) -> str | None:
+    error = str(result.get('error', '')).splitlines()
+    if not error:
+        return None
+    return f'{redact_rtsp_url(candidate)}: {error[-1]}'
+
+
+def _probe_batch(
+    ffmpeg_path: str,
+    candidates: list[tuple[str, str]],
+    username: str,
+    password: str,
+    timeout_seconds: int,
+    seen: set[str],
+    failures: list[str],
+    checked: int,
+) -> tuple[dict[str, Any] | None, int]:
+    pending = [(candidate, method) for candidate, method in candidates if candidate not in seen]
+    if not pending:
+        return None, checked
+    for candidate, _ in pending:
         seen.add(candidate)
-        checked += 1
-        probe_timeout = priority_timeout if index == 0 and priority_timeout else timeout_seconds
-        result = test_rtsp(ffmpeg_path, candidate, username, password, probe_timeout)
-        if result.get('ok'):
-            return {
-                'ok': True,
-                'url': redact_rtsp_url(candidate),
-                'suggested_url': candidate,
-                'transport': result.get('transport', ''),
-                'method': method,
-                'candidates_checked': checked,
-            }, checked
-        error = str(result.get('error', '')).splitlines()[-1:]
-        if error:
-            failures.append(f'{redact_rtsp_url(candidate)}: {error[0]}')
+
+    executor = ThreadPoolExecutor(max_workers=min(4, len(pending)), thread_name_prefix='rtsp-probe')
+    futures = {
+        executor.submit(test_rtsp, ffmpeg_path, candidate, username, password, timeout_seconds): (candidate, method)
+        for candidate, method in pending
+    }
+    try:
+        for future in as_completed(futures):
+            candidate, method = futures[future]
+            checked += 1
+            try:
+                result = future.result()
+            except Exception as exc:
+                result = {'ok': False, 'error': str(exc)}
+            if result.get('ok'):
+                executor.shutdown(wait=False, cancel_futures=True)
+                return {
+                    'ok': True,
+                    'url': redact_rtsp_url(candidate),
+                    'suggested_url': candidate,
+                    'transport': result.get('transport', ''),
+                    'method': method,
+                    'candidates_checked': checked,
+                }, checked
+            failure = _failure_for(candidate, result)
+            if failure:
+                failures.append(failure)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
     return None, checked
 
 
@@ -189,34 +223,41 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
     failures: list[str] = []
     checked = 0
 
-    if _looks_like_root_path(original):
-        base = _candidate_base(original)
-        if base:
-            common = [(base + path, 'common path') for path in COMMON_RTSP_PATHS]
-            result, checked = _probe_candidates(
-                ffmpeg_path, common, username, password, timeout_seconds,
-                seen, failures, checked, priority_timeout=max(5, timeout_seconds),
-            )
-            if result:
-                return result
-        onvif = [(uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password)]
-        result, checked = _probe_candidates(
-            ffmpeg_path, onvif, username, password, timeout_seconds,
-            seen, failures, checked,
-        )
-        if result:
-            return result
-    else:
-        result, checked = _probe_candidates(
+    # Always test an explicitly configured media URL first.
+    if not _looks_like_root_path(original):
+        result, checked = _probe_batch(
             ffmpeg_path, [(original, 'configured URL')], username, password,
             timeout_seconds, seen, failures, checked,
         )
         if result:
             return result
 
-    shown = failures[:10]
-    if len(failures) > 10:
-        shown.append(f'… {len(failures) - 10} more candidates also failed.')
+    base = _candidate_base(original)
+    if base:
+        # The first batch contains the most likely low-cost camera paths. This
+        # keeps auto-detection fast and avoids waiting through a long serial list.
+        common = [(base + path, 'common path') for path in COMMON_RTSP_PATHS]
+        for start in range(0, len(common), 4):
+            result, checked = _probe_batch(
+                ffmpeg_path, common[start:start + 4], username, password,
+                timeout_seconds, seen, failures, checked,
+            )
+            if result:
+                return result
+
+    # ONVIF is a final fallback because WSDL/SOAP setup can be substantially slower.
+    onvif = [(uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password)]
+    for start in range(0, len(onvif), 4):
+        result, checked = _probe_batch(
+            ffmpeg_path, onvif[start:start + 4], username, password,
+            timeout_seconds, seen, failures, checked,
+        )
+        if result:
+            return result
+
+    shown = failures[:12]
+    if len(failures) > 12:
+        shown.append(f'… {len(failures) - 12} more candidates also failed.')
     return {
         'ok': False,
         'url': redact_rtsp_url(original),
