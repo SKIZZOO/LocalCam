@@ -1,11 +1,22 @@
 # Security
 
-LocalCam is intended for trusted home or small-office LANs.
+LocalCam is designed for a trusted private LAN.
 
-- Keep `config.json` private.
-- Use a strong LocalCam web password.
-- Do not expose port 8765 directly to the internet.
-- Use a VPN for remote access instead of port forwarding whenever possible.
-- Camera RTSP passwords are stored only in the local configuration file and are never required in the Git repository.
-- The web application uses an HttpOnly session cookie and PBKDF2-SHA256 password hashes.
-- Keep the Windows network profile Private when using the built-in LAN firewall rule.
+## Protections
+
+- PBKDF2-SHA256 password hashing
+- HttpOnly + SameSite session cookie
+- Login attempt throttling
+- Role-based access control (viewer, operator, admin)
+- Same-origin checks for mutating web requests
+- Path traversal protection for recordings and snapshots
+- Backup archive validation
+- Secrets excluded from Git by default
+
+## Important limitations
+
+The web server uses plain HTTP by default. Do not expose the LocalCam port directly to the public internet. For remote access, use a VPN or a properly configured reverse proxy with TLS.
+
+Backup archives can contain camera credentials and the event database. Store backups securely.
+
+RTSP and ONVIF credentials are stored locally because the application needs them to connect to the cameras. Never publish `config.json`.
