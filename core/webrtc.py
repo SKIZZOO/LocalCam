@@ -328,7 +328,7 @@ class WebRTCManager:
         ]
         if video_codecs:
             video_transceiver.setCodecPreferences(video_codecs)
-        await video_transceiver.sender.replaceTrack(video)
+        video_transceiver.sender.replaceTrack(video)
         try:
             audio = FFmpegAudioTrack(stream.camera, stream.cfg['ffmpeg_path'])
             audio_transceiver = pc.addTransceiver('audio', direction='sendonly')
@@ -338,7 +338,7 @@ class WebRTCManager:
             ]
             if audio_codecs:
                 audio_transceiver.setCodecPreferences(audio_codecs)
-            await audio_transceiver.sender.replaceTrack(audio)
+            audio_transceiver.sender.replaceTrack(audio)
         except Exception as exc:
             self.logger(f'{stream.name}: WebRTC audio unavailable: {exc}')
 
