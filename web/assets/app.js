@@ -316,6 +316,10 @@ function setupArchiveActions() {
   $('playerFullscreen').addEventListener('click', () => $('player').requestFullscreen?.());
   $('player').addEventListener('timeupdate', () => { $('playerCurrent').textContent = fmtTime($('player').currentTime); });
   $('player').addEventListener('loadedmetadata', () => { $('playerDuration').textContent = fmtTime($('player').duration); });
+  $('player').addEventListener('error', () => {
+    const source = $('player').dataset.archivePath;
+    if (source) showToast('This recording could not be played. Try Download to open the original file.', 'error');
+  });
 }
 
 function playRecording(id, name) {
