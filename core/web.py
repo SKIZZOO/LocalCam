@@ -250,7 +250,12 @@ class LocalCamHandler(BaseHTTPRequestHandler):
             if path.startswith('/live/') and path.endswith('.mjpg'):
                 sid = urllib.parse.unquote(path[6:-5])
                 stream = self.server_app.streams.get(sid)
-                return stream.mjpeg(self) if stream else self._error(404, 'Stream not found')
+                if not stream:
+                    return self._error(404, 'Stream not found')
+                quality = (q.get('quality') or ['high'])[0].lower()
+                if quality not in ('low', 'medium', 'high', 'ultra'):
+                    quality = 'high'
+                return stream.mjpeg(self, quality=quality)
             if path.startswith('/api/snapshot/'):
                 sid = urllib.parse.unquote(path.rsplit('/', 1)[-1])
                 stream = self.server_app.streams.get(sid)
