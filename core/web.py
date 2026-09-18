@@ -396,7 +396,7 @@ class LocalCamHandler(BaseHTTPRequestHandler):
             if path == '/api/users':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
-                return self._json(self.server_app.store.list_users())
+                return self._json(self.server_app.user_list())
             if path == '/api/recordings':
                 return self._json(self.recordings(q))
             if path.startswith('/live/') and path.endswith('.mjpg'):
@@ -823,6 +823,7 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 if len(password) < 10:
                     return self._error(400, 'Password must be at least 10 characters')
                 uid = self.server_app.store.create_user(str(x.get('username', '')).strip(), hash_password(password), str(x.get('role', 'viewer')))
+                self.server_app.refresh_user_cache()
                 return self._json({'ok': True, 'id': uid})
             return self._error(404, 'Not found')
         except Exception as exc:
@@ -842,6 +843,7 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 enabled=bool(x['enabled']) if 'enabled' in x else None,
                 password_hash=hash_password(str(x['password'])) if x.get('password') else None,
             )
+            self.server_app.refresh_user_cache()
             return self._json({'ok': True})
         except Exception as exc:
             return self._error(400, str(exc))
@@ -857,6 +859,7 @@ class LocalCamHandler(BaseHTTPRequestHandler):
             if self.server_app.store.user_count() <= 1:
                 return self._error(400, 'At least one user must remain')
             self.server_app.store.delete_user(uid)
+            self.server_app.refresh_user_cache()
             return self._json({'ok': True})
         except Exception as exc:
             return self._error(400, str(exc))
