@@ -570,6 +570,8 @@ class LocalCamServer:
         self.store = EventStore(self.base_dir / 'localcam.sqlite3')
         self._config_cache = load_config()
         self.store.ensure_legacy_admin(str(self._config_cache.get('web_password_hash', '')))
+        self.users_lock = threading.RLock()
+        self._users_cache = self.store.list_users()
         self.ptz = PTZController(self.log)
         self.webrtc = WebRTCManager(self.log)
         self.streams = {}
@@ -937,6 +939,16 @@ class LocalCamServer:
         }
         return sid
 
+    def user_list(self):
+        with self.users_lock:
+            return json.loads(json.dumps(self._users_cache))
+
+    def refresh_user_cache(self):
+        users = self.store.list_users()
+        with self.users_lock:
+            self._users_cache = json.loads(json.dumps(users))
+        return self.user_list()
+
     def safe_settings(self, include_users=True, source=None):
         cfg = json.loads(json.dumps(source if source is not None else self.cfg()))
         cfg['web_password_hash'] = ''
@@ -944,9 +956,7 @@ class LocalCamServer:
             c['password'] = '********' if c.get('password') else ''
             if c.get('ptz', {}).get('password'):
                 c['ptz']['password'] = '********'
-        # Settings saves should not wait on the users table. The settings UI
-        # does not need the user list to confirm a successful save.
-        cfg['users'] = self.store.list_users() if include_users else []
+        cfg['users'] = self.user_list() if include_users else []
         return cfg
 
     def queue_settings_save(self, payload):
