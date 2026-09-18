@@ -729,8 +729,82 @@ async function loadSettings() {
   $('mSnapshots').checked = !!settings.motion?.save_event_snapshots;
   $('mNotifications').checked = !!settings.notifications_enabled;
   renderCameraEditor(settings.cameras || []);
+  renderMotionCameraPicker(settings.cameras || []);
 }
 
+function renderMotionCameraPicker(cameras) {
+  const box = $('motionCameraPicker');
+  if (!box) return;
+
+  const items = Array.isArray(cameras) ? cameras.filter((camera) => camera?.id && camera?.url) : [];
+  const configured = Array.isArray(state.settings?.motion_cameras)
+    ? state.settings.motion_cameras.map((id) => String(id))
+    : [];
+  const configuredSet = new Set(configured);
+  const defaultAll = configured.length === 0;
+
+  box.innerHTML = items.length ? `
+    <div class="motion-camera-head">
+      <div>
+        <strong>Cameras used for motion detection</strong>
+        <span class="hint">Select one or more cameras. Each preview below is the actual live feed LocalCam will analyze.</span>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="icon-btn" data-motion-select-all>Select all</button>
+        <button type="button" class="icon-btn" data-motion-clear-all>Clear all</button>
+      </div>
+    </div>
+    <div class="motion-camera-grid">
+      ${items.map((camera) => {
+        const selected = defaultAll || configuredSet.has(String(camera.id));
+        return `
+          <label class="motion-camera-card">
+            <div class="motion-camera-preview">
+              <img data-motion-preview data-camera-id="${esc(camera.id)}" src="/live/${encodeURIComponent(camera.id)}.mjpg?quality=medium" alt="${esc(camera.name)} live preview">
+              <span>LIVE</span>
+            </div>
+            <div class="motion-camera-info">
+              <input type="checkbox" data-motion-camera value="${esc(camera.id)}" ${selected ? 'checked' : ''}>
+              <span><strong>${esc(camera.name)}</strong><small>${esc(camera.url)}</small></span>
+            </div>
+          </label>`;
+      }).join('')}
+    </div>
+    <div class="motion-camera-summary" id="motionCameraSummary"></div>
+  ` : '<div class="muted">Add at least one camera before choosing motion detection cameras.</div>';
+
+  const refreshState = () => {
+    const selected = box.querySelectorAll('[data-motion-camera]:checked').length;
+    const total = box.querySelectorAll('[data-motion-camera]').length;
+    const enabled = !!$('mEnabled')?.checked;
+    const summary = box.querySelector('#motionCameraSummary');
+    if (summary) summary.textContent = enabled
+      ? (selected ? `Motion will analyze ${selected} of ${total} camera${total === 1 ? '' : 's'}.` : 'Select at least one camera before saving.')
+      : `Motion detection is disabled. ${selected} of ${total} cameras are selected for when you enable it.`;
+    box.classList.toggle('motion-picker-disabled', !enabled);
+    box.querySelectorAll('[data-motion-camera],[data-motion-select-all],[data-motion-clear-all]').forEach((element) => {
+      element.disabled = !enabled;
+    });
+    box.classList.toggle('motion-picker-invalid', enabled && selected === 0);
+  };
+
+  box.querySelectorAll('[data-motion-camera]').forEach((input) => input.addEventListener('change', refreshState));
+  box.querySelector('[data-motion-select-all]')?.addEventListener('click', () => {
+    box.querySelectorAll('[data-motion-camera]').forEach((input) => { input.checked = true; });
+    refreshState();
+  });
+  box.querySelector('[data-motion-clear-all]')?.addEventListener('click', () => {
+    box.querySelectorAll('[data-motion-camera]').forEach((input) => { input.checked = false; });
+    refreshState();
+  });
+  box.querySelectorAll('[data-motion-preview]').forEach((img) => img.addEventListener('error', (event) => {
+    const empty = document.createElement('div');
+    empty.className = 'motion-preview-empty';
+    empty.textContent = 'Preview unavailable';
+    event.currentTarget.replaceWith(empty);
+  }));
+  refreshState();
+}
 function renderCameraEditor(cameras) {
   $('cameraEditor').innerHTML = cameras.length ? cameras.map((camera, index) => `
     <div class="camera-block" data-index="${index}">
@@ -780,6 +854,7 @@ function setupCameraSettings() {
   $('addCamera').addEventListener('click', () => {
     state.settings.cameras.push({ id: `camera-${state.settings.cameras.length + 1}`, name: `Camera ${state.settings.cameras.length + 1}`, url: '', username: 'admin', password: '', ptz: { enabled: false, host: '', port: 80, username: '', password: '' } });
     renderCameraEditor(state.settings.cameras);
+    renderMotionCameraPicker(state.settings.cameras);
   });
 
   $('cameraEditor').addEventListener('click', async (event) => {
@@ -790,6 +865,7 @@ function setupCameraSettings() {
       if (remove) {
         state.settings.cameras.splice(Number(remove.dataset.removeCamera), 1);
         renderCameraEditor(state.settings.cameras);
+        renderMotionCameraPicker(state.settings.cameras);
       }
       if (test) await testCamera(test.dataset.testCamera);
       if (ptzTest) await testPTZ(ptzTest.dataset.testPtz);
@@ -814,6 +890,9 @@ async function testPTZ(id) {
 
 async function saveSettings() {
   if (!state.settings) return;
+  if ($('mEnabled')?.checked && !document.querySelector('[data-motion-camera]:checked')) {
+    throw new Error('Select at least one camera for motion detection before saving.');
+  }
   const payload = {
     ...state.settings,
     record_root: $('sRecordRoot').value.trim(),
@@ -841,6 +920,7 @@ async function saveSettings() {
       cooldown_seconds: Number($('mCooldown').value),
       save_event_snapshots: $('mSnapshots').checked
     },
+    motion_cameras: [...document.querySelectorAll('[data-motion-camera]:checked')].map((input) => input.value),
     cameras: collectCameras()
   };
   const result = await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -978,6 +1058,7 @@ async function testMotion() {
 
 function setupSettingsActions() {
   $('motionTest')?.addEventListener('click', () => testMotion());
+  $('mEnabled')?.addEventListener('change', () => renderMotionCameraPicker(state.settings?.cameras || []));
   $('saveSettings').addEventListener('click', async () => {
     const button = $('saveSettings');
     button.disabled = true;
