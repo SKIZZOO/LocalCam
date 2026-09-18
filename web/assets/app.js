@@ -709,7 +709,7 @@ async function loadRecordings() {
   const params = new URLSearchParams({ date: day, camera, reason, q: query });
   if (from) params.set('from', from);
   if (to) params.set('to', to);
-  const rows = await api(`/api/recordings?${params.toString()}`);
+  const rows = await api(`/api/recordings?${params.toString()}`, { timeoutMs: 5000 });
   $('archiveCount').textContent = `${rows.length} segments`;
   $('recordingsList').innerHTML = rows.length ? rows.map((row) => `
     <div class="row archive-row">
@@ -960,7 +960,7 @@ window.localcamStopTalk = stopTalk;
 async function loadEvents() {
   const day = $('eventsDate').value || today();
   const camera = $('eventsCamera').value || '';
-  const rows = await api(`/api/events?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}`);
+  const rows = await api(`/api/events?date=${encodeURIComponent(day)}&camera=${encodeURIComponent(camera)}`, { timeoutMs: 5000 });
   $('eventsCount').textContent = `${rows.length} events`;
   $('eventsList').innerHTML = rows.length ? rows.map((event) => {
     const snapshot = event.snapshot_path ? `/api/event-snapshot/${encodeURIComponent(event.snapshot_path.split(/[\\/]/).slice(-3).join('/')).replaceAll('%2F', '/')}` : '';
@@ -991,7 +991,7 @@ function setupEventActions() {
 }
 
 async function loadSettings() {
-  const settings = await api('/api/settings');
+  const settings = await api('/api/settings', { timeoutMs: 5000 });
   state.settings = settings;
   $('sRecordRoot').value = settings.record_root ?? '';
   syncPathDisplay('sRecordRoot', 'sRecordRootFull');
@@ -1227,7 +1227,7 @@ async function saveSettings() {
     // camera editor was actually changed in this page session.
     cameras: state.cameraEditorDirty ? collectCameras() : (state.settings.cameras || [])
   };
-  const result = await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const result = await api('/api/settings', { timeoutMs: 8000, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   state.settings = result;
   state.cameraEditorDirty = false;
   $('settingsStatus').textContent = 'Settings saved. Some server changes apply after restart.';
