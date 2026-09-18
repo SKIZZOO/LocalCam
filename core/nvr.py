@@ -343,7 +343,7 @@ class StreamState:
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             pass
 
-    def mjpeg(self, handler, quality='high'):
+    def mjpeg(self, handler, quality='high', sync_at=0.0):
         quality = str(quality or 'high').lower()
         if quality not in PreviewWorker.QUALITY_PRESETS:
             quality = 'high'
@@ -353,6 +353,12 @@ class StreamState:
         with self.lock:
             last = self.seq
             frame = self.frame
+        try:
+            target = float(sync_at or 0.0)
+        except (TypeError, ValueError):
+            target = 0.0
+        if target > time.time():
+            time.sleep(min(1.5, target - time.time()))
         handler.send_response(200)
         handler.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
         handler.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
