@@ -1252,7 +1252,9 @@ async function saveSettings() {
 
 async function loadUsers() {
   if (state.auth?.user?.role !== 'admin') return;
-  const users = await api('/api/users');
+  const users = Array.isArray(state.settings?.users)
+    ? state.settings.users
+    : await api('/api/users');
   $('userEditor').innerHTML = users.map((user) => `
     <div class="user-row">
       <div><b>${esc(user.username)}</b><small>${esc(user.role)} · ${user.enabled ? 'enabled' : 'disabled'} · last login ${esc(user.last_login || 'never')}</small></div>
