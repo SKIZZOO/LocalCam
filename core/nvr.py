@@ -551,6 +551,9 @@ class LocalCamServer:
         self.settings_save_lock = threading.Lock()
         self.settings_save_pending = None
         self.settings_save_running = False
+        self.layout_save_lock = threading.Lock()
+        self.layout_save_pending = None
+        self.layout_save_running = False
         self.log_lock = threading.RLock()
         self.log_path = self.base_dir / 'localcam.log'
         self.httpd = None
@@ -1115,6 +1118,37 @@ class LocalCamServer:
         self.log(f'Settings request completed in {(time.monotonic() - started):.3f}s')
         return result
 
+    def queue_camera_layout_save(self, payload):
+        """Persist dashboard camera order/names outside the HTTP request."""
+        if not isinstance(payload, dict):
+            raise ValueError('Camera layout must be an object.')
+        with self.layout_save_lock:
+            self.layout_save_pending = json.loads(json.dumps(payload))
+            if self.layout_save_running:
+                self.log('Camera layout save already running; coalescing the newest pending layout.')
+                return
+            self.layout_save_running = True
+
+        def worker():
+            while True:
+                with self.layout_save_lock:
+                    pending = self.layout_save_pending
+                    self.layout_save_pending = None
+                if pending is None:
+                    with self.layout_save_lock:
+                        self.layout_save_running = False
+                    return
+                try:
+                    self.save_camera_layout(pending)
+                except Exception as exc:
+                    self.log(f'Camera layout background save failed: {exc}')
+                with self.layout_save_lock:
+                    if self.layout_save_pending is None:
+                        self.layout_save_running = False
+                        return
+
+        threading.Thread(target=worker, daemon=True, name='camera-layout-save').start()
+
     def save_camera_layout(self, payload):
         """Persist dashboard camera order/names without touching stream credentials."""
         requested = payload.get('cameras') if isinstance(payload, dict) else None
@@ -1157,7 +1191,12 @@ class LocalCamServer:
                 if stream:
                     stream.camera['name'] = camera.get('name', stream.camera.get('name', stream.id))
 
-        return self.safe_settings()
+        return {
+            'cameras': [
+                {'id': camera['id'], 'name': camera.get('name', camera['id'])}
+                for camera in ordered
+            ]
+        }
 
     def talk(self, stream: StreamState, audio_path: str, volume: float = 0.05):
         """Send a short microphone clip through an ONVIF audio backchannel."""
