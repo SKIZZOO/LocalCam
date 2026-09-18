@@ -289,6 +289,16 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 })
             if path == '/api/info':
                 return self._json(self.server_app.info())
+            if path == '/api/camera-discovery/status':
+                if not self.server_app.role(self, 'admin'):
+                    return self._error(403, 'Admin role required')
+                job_id = (q.get('job') or [''])[0]
+                with self.server_app.camera_discovery_lock:
+                    job = self.server_app.camera_discovery_job
+                    if not job or job.get('id') != job_id:
+                        return self._error(404, 'Discovery job not found. Start a new network scan.')
+                    response = dict(job)
+                return self._json(response)
             if path == '/api/camera-snapshot':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
@@ -546,16 +556,6 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 except ValueError:
                     return self._error(400, 'Enter a valid private IPv4 subnet, such as 192.168.1.0/24.')
 
-            if path == '/api/camera-discovery/status':
-                if not self.server_app.role(self, 'admin'):
-                    return self._error(403, 'Admin role required')
-                job_id = (q.get('job') or [''])[0]
-                with self.server_app.camera_discovery_lock:
-                    job = self.server_app.camera_discovery_job
-                    if not job or job.get('id') != job_id:
-                        return self._error(404, 'Discovery job not found. Start a new network scan.')
-                    response = dict(job)
-                return self._json(response)
             if path == '/api/camera-assist':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
