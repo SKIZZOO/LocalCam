@@ -1232,22 +1232,27 @@ async function saveSettings() {
     cameras: state.cameraEditorDirty ? collectCameras() : (state.settings.cameras || [])
   };
   const result = await api('/api/settings', { timeoutMs: 5000, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  // The server acknowledges settings immediately and persists them in a
-  // background worker. Keep the just-edited values visible without waiting
-  // for another config.json read in the POST response.
+  // Config persistence is complete before the POST returns. Camera/preview
+  // processes are rebuilt in the background so the HTTP request stays fast.
   state.settings = { ...state.settings, ...payload, cameras: payload.cameras };
   state.cameraEditorDirty = false;
-  $('settingsStatus').textContent = result.queued
-    ? 'Settings queued. LocalCam is applying the changes in the background.'
-    : 'Settings saved. Some server changes apply after restart.';
+  $('settingsStatus').textContent = 'Settings saved. Runtime changes are applying now; no restart is required.';
   renderCameraEditor(state.settings.cameras || []);
-  showToast(result.queued ? 'Settings queued for background save.' : 'Settings saved.', 'success');
-  Promise.all([loadInfo(), loadStreams()]).catch((error) => {
-    reportClientIssue('refresh', 'Post-save dashboard refresh failed', error?.message || String(error));
-  });
-  setTimeout(() => loadSettings().catch((error) => {
-    reportClientIssue('refresh', 'Settings confirmation refresh failed', error?.message || String(error));
-  }), 800);
+  showToast('Settings saved. Applying runtime changes now.', 'success');
+
+  const refreshRuntime = async (attempt = 0) => {
+    try {
+      await Promise.all([loadInfo(), loadStreams()]);
+      // A stream rebuild can take a moment while FFmpeg exits/starts. Keep
+      // refreshing briefly so a newly added camera appears without a restart.
+      if (attempt < 8 && state.settings?.cameras?.length && !state.streams?.length) {
+        setTimeout(() => refreshRuntime(attempt + 1), 250);
+      }
+    } catch (error) {
+      reportClientIssue('refresh', 'Post-save dashboard refresh failed', error?.message || String(error));
+    }
+  };
+  refreshRuntime();
 }
 
 async function loadUsers(force = false) {
