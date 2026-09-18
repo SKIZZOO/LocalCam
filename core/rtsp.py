@@ -339,7 +339,7 @@ def snapshot_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=timeout_seconds + 3,
+                timeout=max(1, int(timeout_seconds)),
             )
         except FileNotFoundError:
             return {'ok': False, 'error': 'FFmpeg executable not found'}
@@ -363,6 +363,7 @@ def _channel_candidates(base: str) -> list[str]:
 
 def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
                            timeout_seconds: int = 2) -> dict[str, Any]:
+    """Find a usable RTSP URL without letting camera setup hang for minutes."""
     original = url.strip()
     try:
         parsed = urlsplit(original)
@@ -377,95 +378,43 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
     checked = 0
     found_streams: list[dict[str, Any]] = []
 
-    # Always test an explicitly configured media URL first. This is important
-    # when a user has already verified the exact URL in VLC.
-    if not _looks_like_root_path(original):
+    def probe_candidates(candidates):
+        nonlocal checked
         result, checked = _probe_batch(
-            ffmpeg_path,
-            [(original, 'configured URL')],
-            username,
-            password,
-            timeout_seconds,
-            seen,
-            failures,
-            checked,
+            ffmpeg_path, candidates, username, password, timeout_seconds,
+            seen, failures, checked
         )
         if result:
             found_streams.append(result)
 
-    base = _candidate_base(original)
-    if base:
-        # Probe all channel/stream variants together. Some cameras expose a
-        # second feed as ch01_0/ch01_1 even when ch00_0 or ch00_1 is already
-        # working, so detection must collect every successful candidate.
-        channel_candidates = [(base + path, 'channel stream') for path in CHANNEL_RTSP_PATHS]
-        channel_results, checked = _probe_all(
-            ffmpeg_path,
-            channel_candidates,
-            username,
-            password,
-            timeout_seconds,
-            seen,
-            failures,
-            checked,
-        )
-        found_streams.extend(channel_results)
+    # If the user supplied a complete RTSP URL, test exactly that URL first.
+    # This is the normal Save/Find-stream path and must finish within the probe
+    # timeout rather than falling through into a large network of guesses.
+    if not _looks_like_root_path(original):
+        probe_candidates([(original, 'configured URL')])
+    else:
+        base = _candidate_base(original)
+        if base:
+            # Known channel paths are tested concurrently and the first working
+            # URL is enough to configure the camera.
+            probe_candidates([(base + path, 'channel stream') for path in CHANNEL_RTSP_PATHS])
 
-        # If any of the known channel variants worked, we have the useful
-        # information the user asked for. Do not keep probing every generic
-        # RTSP path or start slow ONVIF/WSDL discovery; that made the UI sit on
-        # "Detecting..." for minutes even though a working stream was already
-        # found.
-        if not channel_results:
-            common = [(base + path, 'common path') for path in COMMON_RTSP_PATHS if base + path not in seen]
-            result, checked = _probe_batch(
-                ffmpeg_path,
-                common,
-                username,
-                password,
-                timeout_seconds,
-                seen,
-                failures,
-                checked,
-            )
-            if result:
-                found_streams.append(result)
+            # Only if none of the common channel paths work do a second, bounded
+            # batch of generic paths. Do not run snapshot/ONVIF fallback here;
+            # those operations can each wait on unresponsive camera firmware.
+            if not found_streams:
+                remaining = [
+                    (base + path, 'common path')
+                    for path in COMMON_RTSP_PATHS
+                    if base + path not in seen
+                ]
+                probe_candidates(remaining)
 
-    # ONVIF is only a final fallback when RTSP path probing found nothing.
-    if not found_streams:
-        onvif = [(uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password)]
-        for start in range(0, len(onvif), 4):
-            result, checked = _probe_batch(
-                ffmpeg_path,
-                onvif[start:start + 4],
-                username,
-                password,
-                timeout_seconds,
-                seen,
-                failures,
-                checked,
-            )
-            if result:
-                found_streams.append(result)
-
-    # De-duplicate successful URLs. Preview capture is intentionally separate
-    # from discovery so the user can see the detected feeds immediately while
-    # thumbnails load in the background.
-    unique: list[dict[str, Any]] = []
-    seen_success: set[str] = set()
-    for item in found_streams:
-        candidate = str(item.get('suggested_url') or item.get('url') or '')
-        if not candidate or candidate in seen_success:
-            continue
-        seen_success.add(candidate)
-        unique.append(dict(item))
-
-    if unique:
-        primary = dict(unique[0])
-        primary['streams'] = unique
+    if found_streams:
+        primary = dict(found_streams[0])
+        primary['streams'] = [dict(item) for item in found_streams]
         primary['candidates_checked'] = checked
         return primary
-
 
     shown = failures[:12]
     if len(failures) > 12:
@@ -473,6 +422,7 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
     return {
         'ok': False,
         'url': redact_rtsp_url(original),
-        'error': '\n'.join(shown) or 'No usable RTSP stream was found.',
+        'error': '\\n'.join(shown) or 'No usable RTSP stream was found.',
         'candidates_checked': checked,
     }
+
