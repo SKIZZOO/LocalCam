@@ -29,6 +29,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     'web_live_fps': 8,
     'web_live_width': 1920,
     'live_quality': 'high',
+    'motion_cameras': [],
     'web_auto_open': True,
     'web_auth_enabled': True,
     'notifications_enabled': True,
