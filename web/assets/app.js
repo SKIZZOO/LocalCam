@@ -567,7 +567,7 @@ function renderDashboard() {
         <div class="cam-title-wrap">
           <div class="cam-title"><span class="cam-title-view">${esc(stream.name)}</span><input class="cam-title-edit" data-layout-name value="${esc(stream.name)}" aria-label="Camera name"></div>
           <div class="cam-edit-tools">
-            <button type="button" class="icon-btn cam-drag-handle" data-layout-drag title="Drag to rearrange">↕</button>
+            <button type="button" class="icon-btn cam-drag-handle" data-layout-drag draggable="true" title="Drag to rearrange">↕</button>
             <button type="button" class="icon-btn" data-layout-move="up" title="Move up">↑</button>
             <button type="button" class="icon-btn" data-layout-move="down" title="Move down">↓</button>
           </div>
