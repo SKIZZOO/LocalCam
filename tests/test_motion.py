@@ -12,10 +12,11 @@ def test_motion_detector_debounces_real_change():
 
     quiet = detector._decode(_jpeg(20))
     changed = detector._decode(_jpeg(240))
+    changed_again = detector._decode(_jpeg(220))
 
     assert detector._compare(quiet) is False
     assert detector._compare(changed) is False
-    assert detector._compare(changed) is True
+    assert detector._compare(changed_again) is True
     assert detector.active is True
 
     assert detector._compare(quiet) is True
