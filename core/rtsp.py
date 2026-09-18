@@ -401,20 +401,11 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
     else:
         base = _candidate_base(original)
         if base:
-            # Known channel paths are tested concurrently and the first working
-            # URL is enough to configure the camera.
+            # A bare rtsp://host:554/ address is a service root, not a video
+            # stream. Check the small set of channel paths used by the camera
+            # families LocalCam targets. Do not launch a large path sweep from
+            # the Test RTSP button; that made a simple test take tens of seconds.
             probe_candidates([(base + path, 'channel stream') for path in CHANNEL_RTSP_PATHS])
-
-            # Only if none of the common channel paths work do a second, bounded
-            # batch of generic paths. Do not run snapshot/ONVIF fallback here;
-            # those operations can each wait on unresponsive camera firmware.
-            if not found_streams:
-                remaining = [
-                    (base + path, 'common path')
-                    for path in COMMON_RTSP_PATHS
-                    if base + path not in seen
-                ]
-                probe_candidates(remaining)
 
     if found_streams:
         primary = dict(found_streams[0])
