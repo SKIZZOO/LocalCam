@@ -10,7 +10,7 @@ from typing import Any
 class EventStore:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.lock = threading.BoundedSemaphore(8)
+        self.lock = threading.RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
 
