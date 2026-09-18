@@ -64,10 +64,14 @@
     }
   }
 
-  new MutationObserver(() => {
+  // Only react when camera cards themselves are added/removed. Watching
+  // the whole subtree caused our own status-text updates to retrigger polling
+  // continuously, eventually flooding the server and making the UI feel hung.
+  new MutationObserver((mutations) => {
+    if (!mutations.some((mutation) => mutation.addedNodes.length || mutation.removedNodes.length)) return;
     clearTimeout(mutationTimer);
-    mutationTimer = setTimeout(poll, 300);
-  }).observe(grid, { childList: true, subtree: true });
+    mutationTimer = setTimeout(poll, 500);
+  }).observe(grid, { childList: true });
   document.addEventListener('visibilitychange', poll);
   poll();
   timer = setInterval(poll, 10000);
