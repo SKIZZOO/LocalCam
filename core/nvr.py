@@ -476,6 +476,9 @@ class LocalCamServer:
         self.started_at = time.time()
         self.sessions = {}
         self.failures = {}
+        self.camera_discovery_lock = threading.Lock()
+        self.camera_discovery_job = None
+        self.camera_discovery_cache = {}
         self.store = EventStore(self.base_dir / 'localcam.sqlite3')
         cfg = load_config()
         self.store.ensure_legacy_admin(str(cfg.get('web_password_hash', '')))
