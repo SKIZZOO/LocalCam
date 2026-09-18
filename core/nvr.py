@@ -589,7 +589,8 @@ class LocalCamServer:
             worker = self.preview_workers.get(key)
             if worker is None:
                 return
-            empty = worker.remove_listener(callback)
+            remover = getattr(worker, 'remove_listener', None)
+            empty = bool(remover(callback)) if remover else True
             if empty:
                 self.preview_workers.pop(key, None)
         if empty:
