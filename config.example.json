@@ -14,6 +14,7 @@
   "web_live_fps": 8,
   "web_live_width": 1920,
   "live_quality": "high",
+  "motion_cameras": [],
   "web_auto_open": true,
   "web_auth_enabled": true,
   "notifications_enabled": true,
