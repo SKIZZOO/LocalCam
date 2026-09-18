@@ -178,13 +178,26 @@ def _run_probe(ffmpeg_path: str, target: str, transport: str, timeout_seconds: i
 
 def test_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
               timeout_seconds: int = 6) -> dict[str, Any]:
+    """Test RTSP using multiple client/transport combinations in parallel."""
     target = with_credentials(url, username, password)
+    attempts = [
+        ('tcp', RTSP_USER_AGENT, 'TCP (VLC-compatible)'),
+        ('tcp', None, 'TCP (FFmpeg default)'),
+        ('udp', RTSP_USER_AGENT, 'UDP (VLC-compatible)'),
+        ('udp', None, 'UDP (FFmpeg default)'),
+    ]
+
+    def probe(attempt):
+        transport, user_agent, label = attempt
+        return transport, user_agent, label, _run_probe(
+            ffmpeg_path, target, transport, timeout_seconds, user_agent
+        )
+
     errors: list[str] = []
-    for transport in RTSP_TRANSPORTS:
-        # First mimic VLC/LIVE555 because VLC is known to open this camera's
-        # stream. Then fall back to FFmpeg's native Lavf User-Agent.
-        for user_agent in (RTSP_USER_AGENT, None):
-            ok, error = _run_probe(ffmpeg_path, target, transport, timeout_seconds, user_agent)
+    with ThreadPoolExecutor(max_workers=len(attempts), thread_name_prefix='rtsp-attempt') as executor:
+        futures = [executor.submit(probe, attempt) for attempt in attempts]
+        for future in as_completed(futures):
+            transport, user_agent, label, (ok, error) = future.result()
             if ok:
                 return {
                     'ok': True,
@@ -194,16 +207,14 @@ def test_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
                     'url': redact_rtsp_url(target),
                 }
             if error:
-                label = 'VLC' if user_agent else 'Lavf'
-                errors.append(f'{transport.upper()} ({label}): {error}')
+                errors.append(f'{label}: {error}')
+
     return {
         'ok': False,
         'error': '\n'.join(errors),
-        'transport': 'TCP, then UDP',
+        'transport': 'TCP/UDP',
         'url': redact_rtsp_url(target),
     }
-
-
 def _failure_for(candidate: str, result: dict[str, Any]) -> str | None:
     error = str(result.get('error', '')).splitlines()
     if not error:
@@ -292,7 +303,7 @@ def _probe_all(ffmpeg_path: str, candidates: list[tuple[str, str]], username: st
 
 
 def snapshot_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
-                 timeout_seconds: int = 5) -> dict[str, Any]:
+                 timeout_seconds: int = 3) -> dict[str, Any]:
     target = with_credentials(url, username, password)
     errors: list[str] = []
     for transport in RTSP_TRANSPORTS:
@@ -425,8 +436,9 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
             if result:
                 found_streams.append(result)
 
-    # De-duplicate successful URLs and attach previews in parallel so multiple
-    # working feeds do not turn snapshot capture into another long serial wait.
+    # De-duplicate successful URLs. Preview capture is intentionally separate
+    # from discovery so the user can see the detected feeds immediately while
+    # thumbnails load in the background.
     unique: list[dict[str, Any]] = []
     seen_success: set[str] = set()
     for item in found_streams:
@@ -437,35 +449,11 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
         unique.append(dict(item))
 
     if unique:
-        snapshot_timeout = min(5, max(2, timeout_seconds + 1))
-        executor = ThreadPoolExecutor(max_workers=min(4, len(unique)), thread_name_prefix='rtsp-snapshot')
-        futures = {
-            executor.submit(
-                snapshot_rtsp,
-                ffmpeg_path,
-                str(item.get('suggested_url') or item.get('url') or ''),
-                username,
-                password,
-                snapshot_timeout,
-            ): item
-            for item in unique
-        }
-        try:
-            for future in as_completed(futures):
-                item = futures[future]
-                try:
-                    snap = future.result()
-                except Exception as exc:
-                    snap = {'ok': False, 'error': str(exc)}
-                item['preview'] = snap.get('data', '')
-                item['preview_mime'] = snap.get('mime', '')
-        finally:
-            executor.shutdown(wait=True)
-
-    if unique:
         primary = dict(unique[0])
         primary['streams'] = unique
+        primary['candidates_checked'] = checked
         return primary
+
 
     shown = failures[:12]
     if len(failures) > 12:
