@@ -299,6 +299,25 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 })
             if path == '/api/info':
                 return self._json(self.server_app.info())
+            if path == '/api/logs':
+                if not self.server_app.role(self, 'admin', 'operator'):
+                    return self._error(403, 'Operator role required')
+                try:
+                    lines = max(20, min(1000, int((q.get('lines') or ['250'])[0])))
+                except (TypeError, ValueError):
+                    lines = 250
+                try:
+                    raw = self.server_app.log_path.read_text(encoding='utf-8', errors='replace').splitlines()
+                    body = ('\n'.join(raw[-lines:]) + '\n').encode('utf-8')
+                except OSError:
+                    body = b''
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path == '/api/diagnostics':
                 if not self.server_app.role(self, 'admin', 'operator'):
                     return self._error(403, 'Operator role required')
