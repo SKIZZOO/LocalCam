@@ -666,12 +666,14 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                     payload = self._body()
                     if not isinstance(payload, dict):
                         return self._error(400, 'Settings payload must be an object.')
-                    self.server_app.queue_settings_save(payload)
-                    self.server_app.log('Settings HTTP request accepted; persistence is running in the background.')
+                    saved = self.server_app.queue_settings_save(payload)
+                    self.server_app.log('Settings HTTP request persisted successfully; runtime changes are applying in the background.')
                     return self._json({
-                        'queued': True,
-                        'message': 'Settings queued. Runtime changes are applying now.',
-                    }, status=202)
+                        'queued': False,
+                        'applied': True,
+                        'message': 'Settings saved. Runtime changes are applying now.',
+                        'settings': saved,
+                    })
                 except Exception as exc:
                     self.server_app.log(f'Settings queue failed: {exc}')
                     return self._error(500, str(exc))
