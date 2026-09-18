@@ -129,8 +129,11 @@ class EventStore:
             conn.close()
 
     def list_users(self) -> list[dict[str, Any]]:
-        with self.lock:
-            conn = self._conn(); rows = [dict(row) for row in conn.execute('SELECT id,username,role,enabled,created_at,last_login FROM users ORDER BY username').fetchall()]; conn.close(); return rows
+        conn = self._conn()
+        try:
+            return [dict(row) for row in conn.execute('SELECT id,username,role,enabled,created_at,last_login FROM users ORDER BY username').fetchall()]
+        finally:
+            conn.close()
 
     def update_user(self, user_id: int, *, role: str | None = None, enabled: bool | None = None, password_hash: str | None = None) -> None:
         parts=[]; values=[]
