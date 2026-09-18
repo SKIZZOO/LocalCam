@@ -452,5 +452,5 @@
     } finally {
       scanButton.disabled = false;
     }
-
+  });
 })();
