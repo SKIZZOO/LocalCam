@@ -352,11 +352,22 @@ class StreamState:
 
         with self.lock:
             last = self.seq
+            frame = self.frame
         handler.send_response(200)
         handler.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
-        handler.send_header('Cache-Control', 'no-store')
+        handler.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        handler.send_header('Pragma', 'no-cache')
         handler.end_headers()
         try:
+            # Push the most recent frame immediately. Previously the browser
+            # had to wait for another encoder frame before receiving anything.
+            if frame:
+                handler.wfile.write(
+                    b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: '
+                    + str(len(frame)).encode() + b'\r\n\r\n' + frame + b'\r\n'
+                )
+                handler.wfile.flush()
+
             while self.preview:
                 with self.lock:
                     self.lock.wait_for(lambda: self.seq != last or self.preview is None, 4)
