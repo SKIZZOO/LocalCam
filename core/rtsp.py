@@ -178,41 +178,37 @@ def _run_probe(ffmpeg_path: str, target: str, transport: str, timeout_seconds: i
 
 def test_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
               timeout_seconds: int = 6) -> dict[str, Any]:
-    """Test RTSP quickly, preferring TCP and only falling back to UDP if needed."""
+    """Test a single RTSP URL conservatively for camera compatibility."""
     target = with_credentials(url, username, password)
-    stages = (
-        (
-            ('tcp', RTSP_USER_AGENT, 'TCP (VLC-compatible)'),
-            ('tcp', None, 'TCP (FFmpeg default)'),
-        ),
-        (
-            ('udp', RTSP_USER_AGENT, 'UDP (VLC-compatible)'),
-            ('udp', None, 'UDP (FFmpeg default)'),
-        ),
+    attempts = (
+        ('tcp', RTSP_USER_AGENT, 'TCP (VLC-compatible)'),
+        ('tcp', None, 'TCP (FFmpeg default)'),
+        ('udp', RTSP_USER_AGENT, 'UDP (VLC-compatible)'),
+        ('udp', None, 'UDP (FFmpeg default)'),
     )
     errors: list[str] = []
 
-    for attempts in stages:
-        def probe(attempt):
-            transport, user_agent, label = attempt
-            return transport, user_agent, label, _run_probe(
-                ffmpeg_path, target, transport, timeout_seconds, user_agent
-            )
-
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix='rtsp-attempt') as executor:
-            futures = [executor.submit(probe, attempt) for attempt in attempts]
-            for future in as_completed(futures):
-                transport, user_agent, label, (ok, error) = future.result()
-                if ok:
-                    return {
-                        'ok': True,
-                        'error': '',
-                        'transport': transport,
-                        'user_agent': user_agent or 'Lavf/default',
-                        'url': redact_rtsp_url(target),
-                    }
-                if error:
-                    errors.append(f'{label}: {error}')
+    # Camera firmware often handles only one RTSP session reliably. Probe one
+    # transport/client combination at a time instead of opening eight FFmpeg
+    # sessions concurrently across the candidate set.
+    for transport, user_agent, label in attempts:
+        ok, error = _run_probe(
+            ffmpeg_path,
+            target,
+            transport,
+            timeout_seconds,
+            user_agent,
+        )
+        if ok:
+            return {
+                'ok': True,
+                'error': '',
+                'transport': transport,
+                'user_agent': user_agent or 'Lavf/default',
+                'url': redact_rtsp_url(target),
+            }
+        if error:
+            errors.append(f'{label}: {error}')
 
     return {
         'ok': False,
@@ -220,6 +216,7 @@ def test_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
         'transport': 'TCP/UDP',
         'url': redact_rtsp_url(target),
     }
+
 def _failure_for(candidate: str, result: dict[str, Any]) -> str | None:
     error = str(result.get('error', '')).splitlines()
     if not error:
@@ -272,64 +269,53 @@ def _probe_all(ffmpeg_path: str, candidates: list[tuple[str, str]], username: st
     pending = [(candidate, method) for candidate, method in candidates if candidate not in seen]
     if not pending:
         return [], checked
-    for candidate, _ in pending:
-        seen.add(candidate)
-    found: list[dict[str, Any]] = []
-    executor = ThreadPoolExecutor(max_workers=min(4, len(pending)), thread_name_prefix='rtsp-probe-all')
-    futures = {
-        executor.submit(test_rtsp, ffmpeg_path, candidate, username, password, timeout_seconds): (candidate, method)
-        for candidate, method in pending
-    }
-    try:
-        for future in as_completed(futures):
-            candidate, method = futures[future]
-            checked += 1
-            try:
-                result = future.result()
-            except Exception as exc:
-                result = {'ok': False, 'error': str(exc)}
-            if result.get('ok'):
-                found.append({
-                    'ok': True,
-                    'url': redact_rtsp_url(candidate),
-                    'suggested_url': candidate,
-                    'transport': result.get('transport', ''),
-                    'user_agent': result.get('user_agent', ''),
-                    'method': method,
-                    'candidates_checked': checked,
-                })
-            else:
-                # Some camera firmwares open RTSP successfully but do not
-                # produce a clean FFmpeg null-output probe result. A real
-                # one-frame snapshot is a stronger success test and also gives
-                # the UI an immediate preview.
-                snapshot = snapshot_rtsp(
-                    ffmpeg_path,
-                    candidate,
-                    username,
-                    password,
-                    timeout_seconds,
-                )
-                if snapshot.get('ok') and snapshot.get('data'):
-                    found.append({
-                        'ok': True,
-                        'url': redact_rtsp_url(candidate),
-                        'suggested_url': candidate,
-                        'transport': 'snapshot',
-                        'user_agent': RTSP_USER_AGENT,
-                        'method': method,
-                        'preview': snapshot.get('data', ''),
-                        'preview_mime': snapshot.get('mime', 'image/jpeg'),
-                        'candidates_checked': checked,
-                    })
-                else:
-                    failure = _failure_for(candidate, result)
-                    if failure:
-                        failures.append(failure)
-    finally:
-        executor.shutdown(wait=True)
-    return found, checked
 
+    found: list[dict[str, Any]] = []
+    # Serialize candidate probes. This is intentionally slower per candidate
+    # but dramatically more reliable with low-cost NVR/camera RTSP servers.
+    for candidate, method in pending:
+        seen.add(candidate)
+        checked += 1
+        result = test_rtsp(ffmpeg_path, candidate, username, password, timeout_seconds)
+        if result.get('ok'):
+            found.append({
+                'ok': True,
+                'url': redact_rtsp_url(candidate),
+                'suggested_url': candidate,
+                'transport': result.get('transport', ''),
+                'user_agent': result.get('user_agent', ''),
+                'method': method,
+                'candidates_checked': checked,
+            })
+            continue
+
+        # A successful port does not always mean FFmpeg's stream probe exits
+        # cleanly. Try one real snapshot only after the conservative probe fails.
+        snapshot = snapshot_rtsp(
+            ffmpeg_path,
+            candidate,
+            username,
+            password,
+            min(3, max(2, timeout_seconds)),
+        )
+        if snapshot.get('ok') and snapshot.get('data'):
+            found.append({
+                'ok': True,
+                'url': redact_rtsp_url(candidate),
+                'suggested_url': candidate,
+                'transport': 'snapshot',
+                'user_agent': RTSP_USER_AGENT,
+                'method': method,
+                'preview': snapshot.get('data', ''),
+                'preview_mime': snapshot.get('mime', 'image/jpeg'),
+                'candidates_checked': checked,
+            })
+        else:
+            failure = _failure_for(candidate, result)
+            if failure:
+                failures.append(failure)
+
+    return found, checked
 
 def snapshot_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
                  timeout_seconds: int = 3) -> dict[str, Any]:
