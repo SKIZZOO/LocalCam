@@ -767,6 +767,49 @@ class LocalCamServer:
         self.rebuild_streams()
         return self.safe_settings()
 
+    def save_camera_layout(self, payload):
+        """Persist dashboard camera order/names without touching stream credentials."""
+        requested = payload.get('cameras') if isinstance(payload, dict) else None
+        if not isinstance(requested, list):
+            raise ValueError('Camera layout must contain a cameras list.')
+
+        cfg = self.cfg()
+        existing = {str(camera.get('id')): dict(camera) for camera in cfg.get('cameras', [])}
+        seen = set()
+        ordered = []
+
+        for item in requested:
+            if not isinstance(item, dict):
+                continue
+            camera_id = str(item.get('id', '')).strip()
+            if not camera_id or camera_id in seen or camera_id not in existing:
+                continue
+            camera = existing[camera_id]
+            name = str(item.get('name', camera.get('name', camera_id))).strip()
+            camera['name'] = name or camera_id
+            ordered.append(camera)
+            seen.add(camera_id)
+
+        # Preserve any camera that was not included by the browser, rather than
+        # allowing a stale tab to accidentally delete it.
+        for camera in cfg.get('cameras', []):
+            camera_id = str(camera.get('id', '')).strip()
+            if camera_id and camera_id not in seen:
+                ordered.append(dict(camera))
+
+        cfg['cameras'] = ordered
+        save_config(cfg)
+
+        with self.lock:
+            current = self.streams
+            self.streams = {camera['id']: current[camera['id']] for camera in ordered if camera['id'] in current}
+            for camera in ordered:
+                stream = current.get(camera['id'])
+                if stream:
+                    stream.camera['name'] = camera.get('name', stream.camera.get('name', stream.id))
+
+        return self.safe_settings()
+
     def talk(self, stream: StreamState, audio_path: str, volume: float = 0.05):
         """Send a short microphone clip through an ONVIF audio backchannel."""
         settings = stream.camera.get('ptz') or {}
