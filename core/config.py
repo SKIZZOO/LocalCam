@@ -12,6 +12,7 @@ from typing import Any
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = BASE_DIR / 'config.json'
 EXAMPLE_PATH = BASE_DIR / 'config.example.json'
+_CONFIG_IO_LOCK = __import__('threading').RLock()
 
 DEFAULT_CONFIG: dict[str, Any] = {
     'app_name': 'LocalCam',
@@ -143,28 +144,29 @@ def load_config() -> dict[str, Any]:
 
 
 def save_config(config: dict[str, Any]) -> None:
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(config, indent=2, ensure_ascii=False)
-    tmp = CONFIG_PATH.with_suffix('.tmp')
-    tmp.write_text(payload, encoding='utf-8')
-    last_error = None
-    for _ in range(5):
+    with _CONFIG_IO_LOCK:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(config, indent=2, ensure_ascii=False)
+        tmp = CONFIG_PATH.with_suffix('.tmp')
+        tmp.write_text(payload, encoding='utf-8')
+        last_error = None
+        for _ in range(5):
+            try:
+                tmp.replace(CONFIG_PATH)
+                return
+            except OSError as exc:
+                last_error = exc
+                import time
+                time.sleep(0.2)
+        # Windows can briefly hold the target file open (for example while Defender
+        # or another reader scans it). Fall back to a direct write rather than
+        # reporting a transient rename failure as a settings error.
         try:
-            tmp.replace(CONFIG_PATH)
+            CONFIG_PATH.write_text(payload, encoding='utf-8')
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
             return
         except OSError as exc:
-            last_error = exc
-            import time
-            time.sleep(0.2)
-    # Windows can briefly hold the target file open (for example while Defender
-    # or another reader scans it). Fall back to a direct write rather than
-    # reporting a transient rename failure as a settings error.
-    try:
-        CONFIG_PATH.write_text(payload, encoding='utf-8')
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        return
-    except OSError as exc:
-        raise OSError(f'Could not save config.json after retries: {exc}') from last_error or exc
+            raise OSError(f'Could not save config.json after retries: {exc}') from last_error or exc
