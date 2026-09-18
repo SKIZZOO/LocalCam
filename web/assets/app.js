@@ -1232,16 +1232,19 @@ async function saveSettings() {
     cameras: state.cameraEditorDirty ? collectCameras() : (state.settings.cameras || [])
   };
   const result = await api('/api/settings', { timeoutMs: 5000, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  // The server only acknowledges the queue. Keep the edited values in the UI;
-  // persistence and any FFmpeg rebuild happen on the background worker.
+  // The server persists the configuration before returning. FFmpeg/stream
+  // rebuilds continue in the background, so Save never requires a restart.
   state.settings = { ...state.settings, ...payload, cameras: payload.cameras };
+  if (result.settings) {
+    state.settings = { ...state.settings, ...result.settings, cameras: result.settings.cameras || payload.cameras };
+  }
   state.cameraEditorDirty = false;
-  $('settingsStatus').textContent = result.queued
-    ? 'Settings queued. LocalCam is saving them in the background.'
+  $('settingsStatus').textContent = result.applied
+    ? 'Settings saved. Runtime changes are applying now; no restart is required.'
     : 'Settings saved.';
   renderCameraEditor(state.settings.cameras || []);
   renderMotionCameraPicker(state.settings.cameras || []);
-  showToast(result.queued ? 'Settings queued for saving.' : 'Settings saved.', 'success');
+  showToast(result.applied ? 'Settings saved. Applying runtime changes now.' : 'Settings saved.', 'success');
 
   const refreshRuntime = async (attempt = 0) => {
     try {
