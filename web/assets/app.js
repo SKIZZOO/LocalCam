@@ -337,12 +337,11 @@ function renderDashboard() {
 
     return `<article class="cam">
       <div class="cam-head"><div class="cam-title">${esc(stream.name)}</div><span class="pill ${cls}">${badge}</span></div>
-      <div class="cam-body"><video class="live-video" data-camera-id="${esc(stream.id)}" autoplay muted playsinline preload="none"></video><img class="live-fallback" src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay" data-live-transport>WebRTC · H.264</div></div>
+      <div class="cam-body"><img src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay" data-live-transport>MJPEG · ${quality}</div></div>
       <div class="cam-foot"><span>${stream.online ? 'Connected' : 'Waiting for stream'}</span><div class="cam-actions"><button class="small-btn" data-action="snapshot" data-id="${esc(stream.id)}">Snapshot</button>${recordButton}</div></div>
       ${ptz}
     </article>`;
   }).join('');
-  startWebRTCFeeds();
 }
 
 function setupLiveQuality() {
@@ -352,7 +351,9 @@ function setupLiveQuality() {
   select.addEventListener('change', () => {
     state.liveQuality = select.value || 'high';
     localStorage.setItem('localcam.liveQuality', state.liveQuality);
-    renderDashboard();
+    // Rebuild the live MJPEG connections from a clean page load. This avoids
+    // stale media elements fighting while a quality change is in progress.
+    location.reload();
   });
 }
 
