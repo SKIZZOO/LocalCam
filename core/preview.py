@@ -45,6 +45,8 @@ class FastPreviewWorker:
             'direct',
             '-max_delay',
             '0',
+            '-timeout',
+            '5000000',
             '-reorder_queue_size',
             '0',
             '-use_wallclock_as_timestamps',
@@ -213,8 +215,7 @@ class FastPreviewWorker:
             delay = min(15.0, 0.5 * (2 ** min(self.consecutive_failures, 5)))
             self.stop_event.wait(delay)
 
-    @staticmethod
-    def _drain_stderr(proc, tail):
+    def _drain_stderr(self, proc, tail):
         try:
             if not proc.stderr:
                 return
