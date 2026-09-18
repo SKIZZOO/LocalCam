@@ -46,7 +46,7 @@ class FastPreviewWorker:
             target,
             '-an',
             '-vf',
-            f'scale={width}:-2:flags=lanczos,fps={fps}:round=near',
+            f"scale=w='min(iw,{width})':h=-2:flags=lanczos,fps={fps}:round=near",
             '-q:v',
             str(preset['quality']),
             '-pix_fmt',
