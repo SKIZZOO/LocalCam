@@ -42,3 +42,13 @@ def _jpeg(value: int) -> bytes:
     out = BytesIO()
     image.save(out, format='JPEG', quality=95)
     return out.getvalue()
+
+
+
+def test_motion_camera_selection():
+    from core.nvr import motion_selected_for_camera
+
+    assert motion_selected_for_camera('camera-1', {'enabled': False}, ['camera-1']) is False
+    assert motion_selected_for_camera('camera-1', {'enabled': True}, []) is True
+    assert motion_selected_for_camera('camera-1', {'enabled': True}, ['camera-1']) is True
+    assert motion_selected_for_camera('camera-2', {'enabled': True}, ['camera-1']) is False
