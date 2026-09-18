@@ -457,8 +457,9 @@ function setupLiveLayoutActions() {
   grid.addEventListener('dragstart', (event) => {
     if (!state.liveLayoutEdit) return;
     const card = event.target.closest('.cam');
-    const interactive = event.target.closest('button,input,select,a,.cam-edit-tools');
-    if (!card || interactive) {
+    const handle = event.target.closest('[data-layout-drag]');
+    const interactive = event.target.closest('button,input,select,a');
+    if (!card || (interactive && !handle)) {
       event.preventDefault();
       return;
     }
