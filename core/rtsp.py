@@ -299,9 +299,33 @@ def _probe_all(ffmpeg_path: str, candidates: list[tuple[str, str]], username: st
                     'candidates_checked': checked,
                 })
             else:
-                failure = _failure_for(candidate, result)
-                if failure:
-                    failures.append(failure)
+                # Some camera firmwares open RTSP successfully but do not
+                # produce a clean FFmpeg null-output probe result. A real
+                # one-frame snapshot is a stronger success test and also gives
+                # the UI an immediate preview.
+                snapshot = snapshot_rtsp(
+                    ffmpeg_path,
+                    candidate,
+                    username,
+                    password,
+                    timeout_seconds,
+                )
+                if snapshot.get('ok') and snapshot.get('data'):
+                    found.append({
+                        'ok': True,
+                        'url': redact_rtsp_url(candidate),
+                        'suggested_url': candidate,
+                        'transport': 'snapshot',
+                        'user_agent': RTSP_USER_AGENT,
+                        'method': method,
+                        'preview': snapshot.get('data', ''),
+                        'preview_mime': snapshot.get('mime', 'image/jpeg'),
+                        'candidates_checked': checked,
+                    })
+                else:
+                    failure = _failure_for(candidate, result)
+                    if failure:
+                        failures.append(failure)
     finally:
         executor.shutdown(wait=True)
     return found, checked
