@@ -638,7 +638,6 @@ class LocalCamServer:
                     int(cfg['web_live_fps']),
                     callback,
                     quality,
-                    self.log,
                 )
                 self.preview_workers[key] = worker
                 worker.start()
