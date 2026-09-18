@@ -765,6 +765,7 @@ class LocalCamServer:
                     if isinstance(selected, list):
                         cfg['motion_cameras'] = [str(value) for value in selected if str(value) in used_ids]
                     save_config(cfg)
+                    self._set_cfg_cache(cfg)
 
                 with self.lock:
                     old_streams = list(self.streams.values())
@@ -1165,8 +1166,9 @@ class LocalCamServer:
         if not isinstance(requested, list):
             raise ValueError('Camera layout must contain a cameras list.')
 
-        cfg = self.cfg()
-        existing = {str(camera.get('id')): dict(camera) for camera in cfg.get('cameras', [])}
+        with self.config_lock:
+            cfg = self.cfg()
+            existing = {str(camera.get('id')): dict(camera) for camera in cfg.get('cameras', [])}
         seen = set()
         ordered = []
 
@@ -1189,9 +1191,10 @@ class LocalCamServer:
             if camera_id and camera_id not in seen:
                 ordered.append(dict(camera))
 
-        cfg['cameras'] = ordered
-        save_config(cfg)
-        self._set_cfg_cache(cfg)
+        with self.config_lock:
+            cfg['cameras'] = ordered
+            save_config(cfg)
+            self._set_cfg_cache(cfg)
 
         with self.lock:
             current = self.streams
