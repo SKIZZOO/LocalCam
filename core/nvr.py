@@ -200,6 +200,7 @@ class StreamState:
         self.event_id = None
         self.last_motion = 0.0
         self.last_error = ''
+        self.last_motion_error = ''
         self.record_retry_at = 0.0
         self._start()
         m = self.cfg.get('motion', {})
@@ -208,8 +209,8 @@ class StreamState:
                 self.get_frame,
                 self._on_motion,
                 m.get('interval_seconds', .5),
-                m.get('threshold', 8),
-                m.get('min_changed_fraction', .012),
+                m.get('threshold', 6),
+                m.get('min_changed_fraction', .008),
             )
             self.motion.start()
 
@@ -366,6 +367,7 @@ class StreamState:
                 self.motion_active = True
                 snap = self.save_snapshot(frame) if m.get('save_event_snapshots', True) else ''
                 self.event_id = self.store.start_event(self.id, self.name, snap)
+                self.logger(f'{self.name}: motion detected (mean={self.motion.last_mean:.2f}, changed={self.motion.last_changed_fraction:.3f})')
                 if self.cfg.get('record_mode') == 'motion':
                     self.start_recording()
             return
@@ -428,6 +430,18 @@ class StreamState:
             'motion': self.motion_active,
             'last_error': self.last_error,
             'quality': self.preview_quality,
+            'motion_enabled': bool(self.motion),
+            'motion_diagnostics': self.motion.diagnostics() if self.motion else {
+                'enabled': False,
+                'active': False,
+                'raw_detected': False,
+                'mean_difference': 0.0,
+                'changed_fraction': 0.0,
+                'threshold': 0.0,
+                'min_changed_fraction': 0.0,
+                'last_check_at': 0.0,
+                'last_error': 'Motion detection is disabled.',
+            },
         }
 
     def stop(self):
