@@ -46,32 +46,30 @@ def human_bytes(value: int | float) -> str:
 
 
 def quality_rtsp_url(url: str, quality: str) -> str:
-    """Select common main/substream variants used by XMEye/V380-style cameras."""
+    """Keep the camera's selected RTSP feed; only downshift a known main stream."""
     quality = str(quality or 'high').lower()
     if quality not in ('low', 'medium', 'high', 'ultra'):
         quality = 'high'
     source = str(url or '').strip()
 
-    # XMEye/iCSee-style paths: /live/ch00_0 (main) and /live/ch00_1 (substream).
+    # Some cameras label the main/sub streams with _0/_1, but not every
+    # firmware uses _0 as the visually best feed. Never force a user's
+    # explicitly selected _1 feed over to _0 for high/ultra quality.
     match = re.search(r'(/live/ch\d+_)(\d+)(\.sdp)?$', source, re.IGNORECASE)
-    if match:
-        stream_index = '1' if quality == 'low' else '0'
-        return source[:match.start(2)] + stream_index + (match.group(3) or '')
+    if match and quality == 'low' and match.group(2) == '0':
+        return source[:match.start(2)] + '1' + (match.group(3) or '')
 
-    # V380-style URLs: ...&stream=0.sdp (main) / ...&stream=1.sdp (substream).
+    # V380-style stream=0.sdp / stream=1.sdp follows the same conservative
+    # rule: only switch a known main stream down to its substream.
     stream_match = re.search(r'([?&]stream=)(\d+)(\.sdp)?$', source, re.IGNORECASE)
-    if stream_match:
-        stream_index = '1' if quality == 'low' else '0'
-        return source[:stream_match.start(2)] + stream_index + (stream_match.group(3) or '')
+    if stream_match and quality == 'low' and stream_match.group(2) == '0':
+        return source[:stream_match.start(2)] + '1' + (stream_match.group(3) or '')
 
-    # Query-string variant used by some firmware.
     query_match = re.search(r'([?&]substream=)(\d+)', source, re.IGNORECASE)
-    if query_match:
-        stream_index = '1' if quality == 'low' else '0'
-        return source[:query_match.start(2)] + stream_index + source[query_match.end(2):]
+    if query_match and quality == 'low' and query_match.group(2) == '0':
+        return source[:query_match.start(2)] + '1' + source[query_match.end(2):]
 
     return source
-
 def lan_ip() -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
