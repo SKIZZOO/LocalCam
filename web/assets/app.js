@@ -779,7 +779,7 @@ function renderMotionCameraPicker(cameras) {
     const enabled = !!$('mEnabled')?.checked;
     const summary = box.querySelector('#motionCameraSummary');
     if (summary) summary.textContent = enabled
-      ? (selected ? `Motion will analyze ${selected} of ${total} camera${total === 1 ? '' : 's'}.` : 'Select at least one camera before saving.')
+      ? (selected ? `Motion will analyze ${selected} of ${total} camera${total === 1 ? '' : 's'}.` : `No specific cameras selected — motion detection will use all ${total} configured camera${total === 1 ? '' : 's'}.`)
       : `Motion detection is disabled. ${selected} of ${total} cameras are selected for when you enable it.`;
     box.classList.toggle('motion-picker-disabled', !enabled);
     box.querySelectorAll('[data-motion-camera],[data-motion-select-all],[data-motion-clear-all]').forEach((element) => {
