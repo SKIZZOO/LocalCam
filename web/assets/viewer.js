@@ -7,7 +7,7 @@
   let ptzMap = new Map();
   let refreshInFlight = false;
   let refreshTimer = null;
-  let refreshInterval = null;
+  let activeAudio = null;
 
   const style = document.createElement('style');
   style.textContent = `
@@ -106,6 +106,7 @@
   function enhance(card) {
     const img = card.querySelector('.live-video') || card.querySelector('.cam-body img');
     const audio = card.querySelector('.live-audio');
+    const audioSrc = audio?.dataset.audioSrc || '';
     const body = card.querySelector('.cam-body');
     if (!img || !body || body.dataset.liveViewEnhanced) return;
     const id = img.dataset.cameraId || getId(img);
@@ -163,20 +164,33 @@
     if (audio) {
       audio.volume = Number(volume.value);
       audio.addEventListener('error', () => showToast('Live audio is unavailable for this camera.', 'error'), { once:true });
-      mute.addEventListener('click', async () => {
-        audio.muted = !audio.muted;
-        mute.textContent = audio.muted ? 'Unmute' : 'Mute';
-        if (!audio.muted) {
-          try { await audio.play(); } catch {}
+      const activateAudio = async () => {
+        if (!audio.src && audioSrc) {
+          audio.src = audioSrc;
+          audio.preload = 'auto';
         }
+        if (activeAudio && activeAudio !== audio) {
+          activeAudio.pause();
+          activeAudio.muted = true;
+          activeAudio.removeAttribute('src');
+          try { activeAudio.load(); } catch {}
+        }
+        activeAudio = audio;
+        audio.muted = false;
+        try { await audio.play(); } catch {}
+        mute.textContent = 'Mute';
+      };
+      mute.addEventListener('click', async () => {
+        if (audio.muted || !audio.src) {
+          await activateAudio();
+          return;
+        }
+        audio.muted = true;
+        mute.textContent = 'Unmute';
       });
       volume.addEventListener('input', () => {
         audio.volume = Number(volume.value);
-        if (audio.volume > 0 && audio.muted) {
-          audio.muted = false;
-          mute.textContent = 'Mute';
-          audio.play().catch(() => {});
-        }
+        if (audio.volume > 0) activateAudio();
       });
     } else {
       mute.disabled = true; volume.disabled = true;
@@ -282,11 +296,10 @@
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) refresh();
   });
-  refreshInterval = setInterval(refresh, 15000);
   refresh();
 
   window.addEventListener('beforeunload', () => {
-    clearInterval(refreshInterval);
     clearTimeout(refreshTimer);
+    if (activeAudio) { activeAudio.pause(); activeAudio.src = ''; }
   });
 })();
