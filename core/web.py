@@ -615,8 +615,14 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 if not self.server_app.role(self, 'admin', 'operator'):
                     return self._error(403, 'Operator role required')
                 try:
-                    result = self.server_app.save_camera_layout(self._body(100_000))
-                    return self._json(result)
+                    payload = self._body(100_000)
+                    self.server_app.queue_camera_layout_save(payload)
+                    cameras = payload.get('cameras', []) if isinstance(payload, dict) else []
+                    return self._json({
+                        'queued': True,
+                        'message': 'Live layout queued for saving.',
+                        'cameras': cameras if isinstance(cameras, list) else [],
+                    }, status=202)
                 except (TypeError, ValueError, KeyError) as exc:
                     return self._error(400, str(exc))
             if path == '/api/client-log':
@@ -641,10 +647,12 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                         return self._error(400, 'Settings payload must be an object.')
                     self.server_app.queue_settings_save(payload)
                     self.server_app.log('Settings HTTP request accepted and queued for background persistence.')
+                    # Do not read config.json or SQLite again here. The request
+                    # must finish immediately; persistence and stream rebuilds
+                    # happen in background workers.
                     return self._json({
                         'queued': True,
                         'message': 'Settings queued for saving.',
-                        'settings': self.server_app.safe_settings(include_users=False),
                     }, status=202)
                 except Exception as exc:
                     self.server_app.log(f'Settings queue failed: {exc}')
