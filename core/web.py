@@ -294,6 +294,32 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                         'probe': test_rtsp(cfg['ffmpeg_path'], stream.camera['url'], stream.camera.get('username', ''), stream.camera.get('password', ''), 4)
                     }
                 return self._json(out)
+            if path == '/api/motion/test':
+                if not self.server_app.role(self, 'admin', 'operator'):
+                    return self._error(403, 'Operator role required')
+                wanted = (q.get('camera') or [''])[0]
+                out = {}
+                for stream in self.server_app.streams.values():
+                    if wanted and wanted != stream.id:
+                        continue
+                    out[stream.id] = {
+                        'id': stream.id,
+                        'name': stream.name,
+                        'online': stream.status()['online'],
+                        'motion': stream.status()['motion'],
+                        'diagnostics': stream.motion.diagnostics() if stream.motion else {
+                            'enabled': False,
+                            'active': False,
+                            'raw_detected': False,
+                            'mean_difference': 0.0,
+                            'changed_fraction': 0.0,
+                            'threshold': 0.0,
+                            'min_changed_fraction': 0.0,
+                            'last_check_at': 0.0,
+                            'last_error': 'Motion detection is disabled.',
+                        },
+                    }
+                return self._json(out)
             if path == '/api/backup':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
