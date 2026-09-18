@@ -233,7 +233,9 @@ class LocalCamHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', ctype)
         self.send_header('Content-Length', str(len(data)))
-        self.send_header('Cache-Control', 'no-cache')
+        # LocalCam serves its web UI directly from the working tree. Do not let
+        # a browser keep an older JavaScript bundle after an update.
+        self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         self.wfile.write(data)
 
