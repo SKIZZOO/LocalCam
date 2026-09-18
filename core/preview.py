@@ -20,8 +20,11 @@ class FastPreviewWorker:
 
     def __init__(self, ffmpeg, url, username, password, width, fps, on_frame, quality='high'):
         preset = self.QUALITY_PRESETS.get(str(quality).lower(), self.QUALITY_PRESETS['high'])
-        fps = max(1, min(int(fps or preset['fps']), preset['fps']))
-        width = max(320, min(int(width or preset['width']), preset['width']))
+        # The dashboard quality selector is the source of truth for live
+        # output size/FPS. The camera's own stream is never replaced by a
+        # lower-quality substream.
+        fps = max(1, min(int(preset['fps']), 30))
+        width = max(320, min(int(preset['width']), 2560))
         target = with_credentials(url, username, password)
         self.cmd = [
             ffmpeg,
