@@ -767,17 +767,9 @@ class LocalCamServer:
                 save_config(cfg)
                 self._set_cfg_cache(cfg)
 
-            with self.lock:
-                old_streams = list(self.streams.values())
-                self.streams = {}
-
-            self.log(f'Stream rebuild stopping {len(old_streams)} existing stream objects.')
-            for stream in old_streams:
-                try:
-                    stream.stop()
-                except Exception as exc:
-                    self.log(f'Stream stop during rebuild failed for {stream.name}: {exc}')
-
+            # Build the replacement set before touching the live registry.
+            # /api/streams therefore never observes a temporary zero-camera
+            # state while FFmpeg workers are being replaced.
             new_streams = {}
             for camera in cameras:
                 if not camera.get('url') or 'CAMERA_IP' in str(camera.get('url')):
@@ -790,7 +782,23 @@ class LocalCamServer:
                     self.log(f'Failed to rebuild stream {camera.get("id")}: {exc}')
 
             with self.lock:
+                old_streams = list(self.streams.values())
                 self.streams = new_streams
+
+            self.log(
+                f'Stream rebuild swapped {len(old_streams)} old stream object(s) '
+                f'for {len(new_streams)} active stream object(s).'
+            )
+
+            # Stop the old objects after the new registry is live. For
+            # unchanged camera URLs the preview worker is shared, so removing
+            # the old listener leaves the replacement stream connected.
+            for stream in old_streams:
+                try:
+                    stream.stop()
+                except Exception as exc:
+                    self.log(f'Stream stop during rebuild failed for {stream.name}: {exc}')
+
             self.log(f'Stream rebuild complete: {len(new_streams)} stream objects active.')
         except Exception as exc:
             self.log(f'Stream rebuild failed: {exc}')
