@@ -556,6 +556,7 @@ class LocalCamServer:
         self.failures = {}
         self.rebuild_lock = threading.Lock()
         self.rebuild_pending = False
+        self.motion_refresh_pending = False
         self.camera_discovery_lock = threading.Lock()
         self.camera_discovery_job = None
         self.camera_discovery_cache = {}
@@ -670,6 +671,31 @@ class LocalCamServer:
                 'preview_workers': workers,
                 'log_file': str(self.log_path),
             }
+
+    def request_motion_refresh(self, reason='motion settings changed'):
+        with self.rebuild_lock:
+            if getattr(self, 'motion_refresh_pending', False):
+                self.log(f'Motion refresh already queued; coalescing request ({reason}).')
+                return
+            self.motion_refresh_pending = True
+        self.log(f'Queuing motion refresh: {reason}')
+
+        def worker():
+            try:
+                cfg = self.cfg()
+                with self.lock:
+                    active_streams = list(self.streams.values())
+                for stream in active_streams:
+                    try:
+                        stream.cfg = cfg
+                        stream.refresh_motion()
+                    except Exception as exc:
+                        self.log(f'Motion refresh failed for {stream.name}: {exc}')
+            finally:
+                with self.rebuild_lock:
+                    self.motion_refresh_pending = False
+
+        threading.Thread(target=worker, daemon=True, name='motion-refresh').start()
 
     def request_rebuild(self, reason='settings changed'):
         with self.rebuild_lock:
@@ -896,14 +922,16 @@ class LocalCamServer:
         }
         return sid
 
-    def safe_settings(self):
-        cfg = json.loads(json.dumps(self.cfg()))
+    def safe_settings(self, include_users=True, source=None):
+        cfg = json.loads(json.dumps(source if source is not None else self.cfg()))
         cfg['web_password_hash'] = ''
         for c in cfg.get('cameras', []):
             c['password'] = '********' if c.get('password') else ''
             if c.get('ptz', {}).get('password'):
                 c['ptz']['password'] = '********'
-        cfg['users'] = self.store.list_users()
+        # Settings saves should not wait on the users table. The settings UI
+        # does not need the user list to confirm a successful save.
+        cfg['users'] = self.store.list_users() if include_users else []
         return cfg
 
     def save_settings(self, payload):
@@ -1009,10 +1037,10 @@ class LocalCamServer:
         previous_cameras = old
         camera_changed = cameras != previous_cameras
         previous_runtime = {
-            'ffmpeg_path': load_config().get('ffmpeg_path'),
-            'web_live_fps': self.cfg().get('web_live_fps'),
-            'web_live_width': self.cfg().get('web_live_width'),
-            'live_quality': self.cfg().get('live_quality'),
+            'ffmpeg_path': cfg.get('ffmpeg_path'),
+            'web_live_fps': cfg.get('web_live_fps'),
+            'web_live_width': cfg.get('web_live_width'),
+            'live_quality': cfg.get('live_quality'),
         }
         runtime_changed = (
             camera_changed
@@ -1031,13 +1059,11 @@ class LocalCamServer:
             # startup. Camera/preview rebuilds happen in the background.
             self.request_rebuild('camera/preview runtime settings changed')
         else:
-            with self.lock:
-                active_streams = list(self.streams.values())
-            for stream in active_streams:
-                stream.cfg = cfg
-                stream.refresh_motion()
+            self.request_motion_refresh('motion settings changed')
 
-        result = self.safe_settings()
+        # Return the already-saved configuration directly. Do not make a save
+        # request wait on SQLite user-list access or another background worker.
+        result = self.safe_settings(include_users=False, source=cfg)
         self.log(f'Settings request completed in {(time.monotonic() - started):.3f}s')
         return result
 
