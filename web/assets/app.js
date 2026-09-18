@@ -332,6 +332,7 @@ function setLiveLayoutEdit(enabled) {
   if (state.liveLayoutEdit) {
     state.liveLayoutOriginal = state.streams.map((stream) => ({ id: String(stream.id), name: String(stream.name) }));
     state.liveLayoutDirty = false;
+    showToast('Drag a camera card to swap its position, or use ↑ / ↓. Rename it here, then Save layout.', 'info');
     const first = grid.querySelector('.cam-title-edit');
     first?.focus();
     first?.select();
@@ -456,7 +457,8 @@ function setupLiveLayoutActions() {
   grid.addEventListener('dragstart', (event) => {
     if (!state.liveLayoutEdit) return;
     const card = event.target.closest('.cam');
-    if (!card || !event.target.closest('[data-layout-drag]')) {
+    const interactive = event.target.closest('button,input,select,a,.cam-edit-tools');
+    if (!card || interactive) {
       event.preventDefault();
       return;
     }
@@ -571,7 +573,7 @@ function renderDashboard() {
         </div>
         <span class="pill ${cls}">${badge}</span>
       </div>
-      <div class="cam-body"><img decoding="async" fetchpriority="high" src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}&sync=${encodeURIComponent(state.liveSyncAt.toFixed(3))}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay" data-live-transport>MJPEG · ${quality}</div></div>
+      <div class="cam-body"><img draggable="false" decoding="async" fetchpriority="high" src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}&sync=${encodeURIComponent(state.liveSyncAt.toFixed(3))}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay" data-live-transport>MJPEG · ${quality}</div></div>
       <div class="cam-foot"><span>${stream.online ? 'Connected' : 'Waiting for stream'}</span><div class="cam-actions"><button class="small-btn" data-action="snapshot" data-id="${esc(stream.id)}">Snapshot</button>${recordButton}</div></div>
       ${ptz}
     </article>`;
