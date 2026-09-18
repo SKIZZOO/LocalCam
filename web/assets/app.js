@@ -723,8 +723,8 @@ async function loadSettings() {
   $('sAuth').checked = !!settings.web_auth_enabled;
   $('mEnabled').checked = !!settings.motion?.enabled;
   $('mInterval').value = settings.motion?.interval_seconds ?? 0.5;
-  $('mThreshold').value = settings.motion?.threshold ?? 8;
-  $('mFraction').value = settings.motion?.min_changed_fraction ?? 0.012;
+  $('mThreshold').value = settings.motion?.threshold ?? 6;
+  $('mFraction').value = settings.motion?.min_changed_fraction ?? 0.008;
   $('mCooldown').value = settings.motion?.cooldown_seconds ?? 15;
   $('mSnapshots').checked = !!settings.motion?.save_event_snapshots;
   $('mNotifications').checked = !!settings.notifications_enabled;
@@ -948,7 +948,36 @@ function setupFolderPickers() {
   syncPathDisplay('sSnapshotRoot', 'sSnapshotRootFull');
 }
 
+async function testMotion() {
+  const button = $('motionTest');
+  const status = $('motionTestStatus');
+  if (!button || !status) return;
+  button.disabled = true;
+  status.textContent = 'Reading live motion detector status…';
+  try {
+    const data = await api('/api/motion/test');
+    const rows = Object.values(data);
+    if (!rows.length) {
+      status.textContent = 'No cameras are configured.';
+      return;
+    }
+    const parts = rows.map((row) => {
+      const d = row.diagnostics || {};
+      if (!d.enabled) return `${row.name}: detector disabled`;
+      if (d.last_error) return `${row.name}: detector error — ${d.last_error}`;
+      const checked = d.last_check_at ? new Date(Number(d.last_check_at) * 1000).toLocaleTimeString() : 'never';
+      return `${row.name}: ${d.active ? 'MOTION' : 'quiet'} · difference ${Number(d.mean_difference || 0).toFixed(1)} · changed ${(Number(d.changed_fraction || 0) * 100).toFixed(1)}% · checked ${checked}`;
+    });
+    status.textContent = parts.join('  |  ');
+  } catch (error) {
+    status.textContent = error.message || 'Motion diagnostic failed.';
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function setupSettingsActions() {
+  $('motionTest')?.addEventListener('click', () => testMotion());
   $('saveSettings').addEventListener('click', async () => {
     const button = $('saveSettings');
     button.disabled = true;
