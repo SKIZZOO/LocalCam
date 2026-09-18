@@ -548,6 +548,9 @@ class LocalCamServer:
         self.base_dir = Path(base_dir)
         self.lock = threading.RLock()
         self.config_lock = threading.RLock()
+        self.settings_save_lock = threading.Lock()
+        self.settings_save_pending = None
+        self.settings_save_running = False
         self.log_lock = threading.RLock()
         self.log_path = self.base_dir / 'localcam.log'
         self.httpd = None
@@ -934,6 +937,37 @@ class LocalCamServer:
         # does not need the user list to confirm a successful save.
         cfg['users'] = self.store.list_users() if include_users else []
         return cfg
+
+    def queue_settings_save(self, payload):
+        """Persist settings outside the HTTP request thread."""
+        if not isinstance(payload, dict):
+            raise ValueError('Settings payload must be an object.')
+        with self.settings_save_lock:
+            self.settings_save_pending = json.loads(json.dumps(payload))
+            if self.settings_save_running:
+                self.log('Settings save already running; coalescing the newest pending save.')
+                return
+            self.settings_save_running = True
+
+        def worker():
+            while True:
+                with self.settings_save_lock:
+                    pending = self.settings_save_pending
+                    self.settings_save_pending = None
+                if pending is None:
+                    with self.settings_save_lock:
+                        self.settings_save_running = False
+                    return
+                try:
+                    self.save_settings(pending)
+                except Exception as exc:
+                    self.log(f'Settings background save failed: {exc}')
+                with self.settings_save_lock:
+                    if self.settings_save_pending is None:
+                        self.settings_save_running = False
+                        return
+
+        threading.Thread(target=worker, daemon=True, name='settings-save').start()
 
     def save_settings(self, payload):
         started = time.monotonic()
