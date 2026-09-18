@@ -736,13 +736,8 @@ class LocalCamServer:
                     'password': ppass,
                 },
             })
-        # Never let a malformed/stale settings page erase a working camera
-        # configuration by posting an empty camera list. Removing cameras one
-        # at a time remains supported; an accidental empty payload is preserved.
-        submitted_cameras = payload.get('cameras') if 'cameras' in payload else None
-        if isinstance(submitted_cameras, list) and not submitted_cameras and old:
-            cameras = old
-
+        # An explicitly submitted camera list is authoritative. An empty
+        # list means the user intentionally removed the last camera.
         cfg['cameras'] = cameras
 
         camera_ids = {str(camera['id']) for camera in cameras}
