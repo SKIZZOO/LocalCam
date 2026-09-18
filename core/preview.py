@@ -221,10 +221,21 @@ class FastPreviewWorker:
             for raw in proc.stderr:
                 message = raw.decode('utf-8', 'replace').strip()
                 if message:
+                    message = self._redact_text(message)
                     tail.append(message[-1000:])
                     del tail[:-12]
         except Exception:
             pass
+
+    @staticmethod
+    def _redact_text(message):
+        import re
+        return re.sub(
+            r'(rtsp://)([^:/@]+)(:)([^@/]+)(@)',
+            r'\1\2\3********\5',
+            str(message),
+            flags=re.IGNORECASE,
+        )
 
     def _safe_target(self):
         try:
