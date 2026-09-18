@@ -216,6 +216,7 @@ async function loadAuth() {
   const user = state.auth.user;
   $('sideUser').textContent = user ? `${user.username} · ${user.role}` : '—';
 }
+  updateLiveLayoutPermission();
 
 function setPage(name) {
   if (name === 'settings' && !can('admin')) return;
@@ -424,6 +425,12 @@ function cancelLiveLayout() {
   }
   state.liveLayoutDirty = false;
   setLiveLayoutEdit(false);
+}
+
+function updateLiveLayoutPermission() {
+  const arrange = $('liveArrange');
+  if (arrange) arrange.hidden = !can('control');
+  if (!can('control') && state.liveLayoutEdit) cancelLiveLayout();
 }
 
 function setupLiveLayoutActions() {
