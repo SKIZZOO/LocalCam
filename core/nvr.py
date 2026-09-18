@@ -528,6 +528,8 @@ class LocalCamServer:
     def __init__(self, base_dir: Path = BASE_DIR):
         self.base_dir = Path(base_dir)
         self.lock = threading.RLock()
+        self.log_lock = threading.RLock()
+        self.log_path = self.base_dir / 'localcam.log'
         self.httpd = None
         self.thread = None
         self.started_at = time.time()
@@ -546,7 +548,25 @@ class LocalCamServer:
         self.rebuild_streams()
 
     def log(self, message):
-        print(f'[{datetime.now():%Y-%m-%d %H:%M:%S}] {message}')
+        line = f'[{datetime.now():%Y-%m-%d %H:%M:%S}] {message}'
+        print(line)
+        try:
+            with self.log_lock:
+                if self.log_path.exists() and self.log_path.stat().st_size > 5 * 1024 * 1024:
+                    rotated = self.log_path.with_suffix('.log.1')
+                    try:
+                        if rotated.exists():
+                            rotated.unlink()
+                    except OSError:
+                        pass
+                    try:
+                        self.log_path.replace(rotated)
+                    except OSError:
+                        pass
+                with self.log_path.open('a', encoding='utf-8') as handle:
+                    handle.write(line + '\n')
+        except OSError:
+            pass
 
     def cfg(self):
         return load_config()
@@ -577,6 +597,7 @@ class LocalCamServer:
                     int(cfg['web_live_fps']),
                     callback,
                     quality,
+                    self.log,
                 )
                 self.preview_workers[key] = worker
                 worker.start()
@@ -595,6 +616,37 @@ class LocalCamServer:
                 self.preview_workers.pop(key, None)
         if empty:
             worker.stop()
+
+    def diagnostics(self):
+        with self.lock:
+            workers = []
+            for key, worker in self.preview_workers.items():
+                status_fn = getattr(worker, 'status', None)
+                status = status_fn() if status_fn else {
+                    'alive': bool(worker.thread and worker.thread.is_alive()),
+                    'frames': 0,
+                    'restarts': 0,
+                    'consecutive_failures': 0,
+                    'last_error': '',
+                }
+                source = key[0] if isinstance(key, tuple) and key else str(key)
+                try:
+                    from urllib.parse import urlsplit
+                    parsed = urlsplit(source)
+                    source = f'{parsed.scheme}://{parsed.hostname}:{parsed.port or ""}{parsed.path}'
+                except Exception:
+                    pass
+                workers.append({
+                    'source': source,
+                    'listeners': len(getattr(worker, 'listeners', [])),
+                    **status,
+                })
+            return {
+                'threads': threading.active_count(),
+                'streams': len(self.streams),
+                'preview_workers': workers,
+                'log_file': str(self.log_path),
+            }
 
     def rebuild_streams(self):
         cfg = self.cfg()
