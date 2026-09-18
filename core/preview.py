@@ -98,6 +98,19 @@ class FastPreviewWorker:
             self.listeners = [listener for listener in self.listeners if listener != callback]
             return not self.listeners
 
+    def status(self):
+        with self._listener_lock:
+            listeners = len(self.listeners)
+        return {
+            'alive': bool(self.thread and self.thread.is_alive() and not self.stop_event.is_set()),
+            'frames': int(self.frames),
+            'restarts': int(self.restart_count),
+            'consecutive_failures': int(self.consecutive_failures),
+            'last_frame_at': float(self.last_frame_at),
+            'last_error': self.last_error,
+            'listeners': listeners,
+        }
+
     def stop(self):
         self.stop_event.set()
         if self.proc:
