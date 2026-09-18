@@ -459,6 +459,24 @@ class StreamState:
         except ValueError:
             return str(path)
 
+    def refresh_motion(self):
+        if self.motion:
+            self.motion.stop()
+            self.motion = None
+        m = self.cfg.get('motion', {})
+        selected_motion_cameras = self.cfg.get('motion_cameras', [])
+        if not isinstance(selected_motion_cameras, list):
+            selected_motion_cameras = []
+        if motion_selected_for_camera(self.id, m, selected_motion_cameras):
+            self.motion = MotionDetector(
+                self.get_frame,
+                self._on_motion,
+                m.get('interval_seconds', .5),
+                m.get('threshold', 6),
+                m.get('min_changed_fraction', .008),
+            )
+            self.motion.start()
+
     def start_recording(self, force=False):
         if self.recorder and self.recorder.running:
             return True
@@ -536,6 +554,8 @@ class LocalCamServer:
         self.started_at = time.time()
         self.sessions = {}
         self.failures = {}
+        self.rebuild_lock = threading.Lock()
+        self.rebuild_pending = False
         self.camera_discovery_lock = threading.Lock()
         self.camera_discovery_job = None
         self.camera_discovery_cache = {}
@@ -649,50 +669,86 @@ class LocalCamServer:
                 'log_file': str(self.log_path),
             }
 
+    def request_rebuild(self, reason='settings changed'):
+        with self.rebuild_lock:
+            if self.rebuild_pending:
+                self.log(f'Rebuild already queued; coalescing request ({reason}).')
+                return
+            self.rebuild_pending = True
+        self.log(f'Queuing stream rebuild: {reason}')
+        threading.Thread(
+            target=self.rebuild_streams,
+            daemon=True,
+            name='stream-rebuild',
+        ).start()
+
     def rebuild_streams(self):
-        cfg = self.cfg()
-        cameras = [dict(item) for item in cfg.get('cameras', []) if isinstance(item, dict)]
-        changed = False
-        used_ids = set()
+        with self.rebuild_lock:
+            try:
+                cfg = self.cfg()
+                cameras = [dict(item) for item in cfg.get('cameras', []) if isinstance(item, dict)]
+                changed = False
+                used_ids = set()
 
-        def slug(value):
-            return re.sub(r'[^a-z0-9]+', '-', str(value).lower()).strip('-')
+                def slug(value):
+                    return re.sub(r'[^a-z0-9]+', '-', str(value).lower()).strip('-')
 
-        for i, c in enumerate(cameras):
-            c.setdefault('id', f'camera-{i + 1}')
-            c.setdefault('name', f'Camera {i + 1}')
-            c.setdefault('username', 'admin')
-            c.setdefault('password', '')
-            c.setdefault('ptz', {})
-            camera_id = str(c.get('id', '')).strip() or f'camera-{i + 1}'
-            if camera_id in used_ids:
-                base = slug(c.get('name')) or f'camera-{i + 1}'
-                candidate = base
-                suffix = 2
-                while candidate in used_ids:
-                    candidate = f'{base}-{suffix}'
-                    suffix += 1
-                camera_id = candidate
-                c['id'] = camera_id
-                changed = True
-            else:
-                c['id'] = camera_id
-            used_ids.add(camera_id)
+                for i, c in enumerate(cameras):
+                    c.setdefault('id', f'camera-{i + 1}')
+                    c.setdefault('name', f'Camera {i + 1}')
+                    c.setdefault('username', 'admin')
+                    c.setdefault('password', '')
+                    c.setdefault('ptz', {})
+                    camera_id = str(c.get('id', '')).strip() or f'camera-{i + 1}'
+                    if camera_id in used_ids:
+                        base = slug(c.get('name')) or f'camera-{i + 1}'
+                        candidate = base
+                        suffix = 2
+                        while candidate in used_ids:
+                            candidate = f'{base}-{suffix}'
+                            suffix += 1
+                        camera_id = candidate
+                        c['id'] = camera_id
+                        changed = True
+                    else:
+                        c['id'] = camera_id
+                    used_ids.add(camera_id)
 
-        if changed:
-            cfg['cameras'] = cameras
-            selected = cfg.get('motion_cameras', [])
-            if isinstance(selected, list):
-                cfg['motion_cameras'] = [str(value) for value in selected if str(value) in used_ids]
-            save_config(cfg)
+                if changed:
+                    cfg['cameras'] = cameras
+                    selected = cfg.get('motion_cameras', [])
+                    if isinstance(selected, list):
+                        cfg['motion_cameras'] = [str(value) for value in selected if str(value) in used_ids]
+                    save_config(cfg)
 
-        with self.lock:
-            for s in self.streams.values():
-                s.stop()
-            self.streams.clear()
-            for c in cameras:
-                if c.get('url') and 'CAMERA_IP' not in str(c.get('url')):
-                    self.streams[c['id']] = StreamState(c, cfg, self.store, self.log, self)
+                with self.lock:
+                    old_streams = list(self.streams.values())
+                    self.streams = {}
+
+                self.log(f'Stream rebuild stopping {len(old_streams)} existing stream objects.')
+                for stream in old_streams:
+                    try:
+                        stream.stop()
+                    except Exception as exc:
+                        self.log(f'Stream stop during rebuild failed for {stream.name}: {exc}')
+
+                new_streams = {}
+                for camera in cameras:
+                    if not camera.get('url') or 'CAMERA_IP' in str(camera.get('url')):
+                        continue
+                    try:
+                        new_streams[camera['id']] = StreamState(
+                            camera, cfg, self.store, self.log, self
+                        )
+                    except Exception as exc:
+                        self.log(f'Failed to rebuild stream {camera.get("id")}: {exc}')
+
+                with self.lock:
+                    self.streams = new_streams
+                self.log(f'Stream rebuild complete: {len(new_streams)} stream objects active.')
+            finally:
+                with self.rebuild_lock:
+                    self.rebuild_pending = False
 
     def start(self):
         from core.web import LocalCamHandler
@@ -943,8 +999,34 @@ class LocalCamServer:
             if camera_id in camera_ids
         ]
 
+        previous_cameras = old
+        camera_changed = cameras != previous_cameras
+        previous_runtime = {
+            'ffmpeg_path': load_config().get('ffmpeg_path'),
+            'web_live_fps': self.cfg().get('web_live_fps'),
+            'web_live_width': self.cfg().get('web_live_width'),
+            'live_quality': self.cfg().get('live_quality'),
+        }
+        runtime_changed = (
+            camera_changed
+            or previous_runtime['ffmpeg_path'] != cfg.get('ffmpeg_path')
+            or previous_runtime['web_live_fps'] != cfg.get('web_live_fps')
+            or previous_runtime['web_live_width'] != cfg.get('web_live_width')
+            or previous_runtime['live_quality'] != cfg.get('live_quality')
+        )
+
+        started = time.monotonic()
         save_config(cfg)
-        self.rebuild_streams()
+        self.log(f'Settings saved in {(time.monotonic() - started):.3f}s; camera_changed={camera_changed}, runtime_changed={runtime_changed}')
+
+        if runtime_changed:
+            self.request_rebuild('camera/preview runtime settings changed')
+        else:
+            with self.lock:
+                for stream in self.streams.values():
+                    stream.cfg = cfg
+                    stream.refresh_motion()
+
         return self.safe_settings()
 
     def save_camera_layout(self, payload):
