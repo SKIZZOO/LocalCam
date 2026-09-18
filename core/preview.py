@@ -66,6 +66,10 @@ class FastPreviewWorker:
             'mjpeg',
             'pipe:1',
         ]
+        self._listener_lock = threading.RLock()
+        self.listeners = []
+        if on_frame:
+            self.listeners.append(on_frame)
         self.on_frame = on_frame
         self.proc = None
         self.thread = None
@@ -77,6 +81,16 @@ class FastPreviewWorker:
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._run, daemon=True, name='preview')
         self.thread.start()
+
+    def add_listener(self, callback):
+        with self._listener_lock:
+            if callback not in self.listeners:
+                self.listeners.append(callback)
+
+    def remove_listener(self, callback):
+        with self._listener_lock:
+            self.listeners = [listener for listener in self.listeners if listener != callback]
+            return not self.listeners
 
     def stop(self):
         self.stop_event.set()
@@ -131,7 +145,13 @@ class FastPreviewWorker:
                     frame = self._read_jpeg(self.proc.stdout)
                     if not frame:
                         break
-                    self.on_frame(frame)
+                    with self._listener_lock:
+                        listeners = list(self.listeners)
+                    for listener in listeners:
+                        try:
+                            listener(frame)
+                        except Exception:
+                            pass
             finally:
                 try:
                     self.proc.kill()
