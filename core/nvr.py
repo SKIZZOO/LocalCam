@@ -960,31 +960,15 @@ class LocalCamServer:
         return cfg
 
     def queue_settings_save(self, payload):
-        """Queue settings persistence so the HTTP request never waits on disk."""
+        """Persist settings immediately; runtime rebuilds remain asynchronous."""
         if not isinstance(payload, dict):
             raise ValueError('Settings payload must be an object.')
 
+        # Configuration writes are intentionally part of the HTTP request so a
+        # successful Save means the values are already on disk. Expensive
+        # FFmpeg teardown/startup is still performed asynchronously.
         with self.settings_save_lock:
-            self.settings_save_pending = json.loads(json.dumps(payload))
-            if self.settings_save_running:
-                self.log('Settings save already running; coalescing the newest pending save.')
-                return
-            self.settings_save_running = True
-
-        def worker():
-            while True:
-                with self.settings_save_lock:
-                    pending = self.settings_save_pending
-                    self.settings_save_pending = None
-                if pending is None:
-                    with self.settings_save_lock:
-                        self.settings_save_running = False
-                    return
-                try:
-                    self.save_settings(pending)
-                except Exception as exc:
-                    self.log(f'Settings background save failed: {exc}')
-        threading.Thread(target=worker, daemon=True, name='settings-save').start()
+            return self.save_settings(json.loads(json.dumps(payload)))
 
     def save_settings(self, payload):
         started = time.monotonic()
