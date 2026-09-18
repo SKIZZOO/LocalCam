@@ -155,11 +155,18 @@ class FastPreviewWorker:
                 self.proc = subprocess.Popen(
                     self.cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     bufsize=0,
                     creationflags=flags,
                 )
                 self.restart_count += 1
+                stderr_tail = []
+                threading.Thread(
+                    target=self._drain_stderr,
+                    args=(self.proc, stderr_tail),
+                    daemon=True,
+                    name='preview-stderr',
+                ).start()
             except OSError as exc:
                 self.consecutive_failures += 1
                 self.last_error = str(exc)
@@ -197,12 +204,27 @@ class FastPreviewWorker:
                 self.consecutive_failures += 1
                 self.last_error = 'FFmpeg preview ended before a frame was received.'
                 if self.logger:
+                    detail = ' | '.join(stderr_tail[-3:]) if stderr_tail else self.last_error
                     self.logger(
                         f'Preview worker lost stream for {self._safe_target()} '
                         f'(restart #{self.restart_count}, consecutive failures={self.consecutive_failures})'
+                        + (f' | ffmpeg: {detail}' if detail else '')
                     )
             delay = min(15.0, 0.5 * (2 ** min(self.consecutive_failures, 5)))
             self.stop_event.wait(delay)
+
+    @staticmethod
+    def _drain_stderr(proc, tail):
+        try:
+            if not proc.stderr:
+                return
+            for raw in proc.stderr:
+                message = raw.decode('utf-8', 'replace').strip()
+                if message:
+                    tail.append(message[-1000:])
+                    del tail[:-12]
+        except Exception:
+            pass
 
     def _safe_target(self):
         try:
