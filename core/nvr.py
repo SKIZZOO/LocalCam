@@ -204,7 +204,14 @@ class StreamState:
         self.record_retry_at = 0.0
         self._start()
         m = self.cfg.get('motion', {})
-        if m.get('enabled'):
+        selected_motion_cameras = self.cfg.get('motion_cameras', [])
+        if not isinstance(selected_motion_cameras, list):
+            selected_motion_cameras = []
+        selected_motion_cameras = {str(value) for value in selected_motion_cameras if str(value).strip()}
+        motion_for_camera = bool(m.get('enabled')) and (
+            not selected_motion_cameras or self.id in selected_motion_cameras
+        )
+        if motion_for_camera:
             self.motion = MotionDetector(
                 self.get_frame,
                 self._on_motion,
@@ -648,7 +655,7 @@ class LocalCamServer:
             'ffmpeg_path', 'record_root', 'snapshot_root', 'record_mode', 'segment_minutes',
             'min_free_gb', 'max_retention_days', 'web_bind', 'web_port', 'web_live_fps',
             'web_live_width', 'web_enabled', 'web_auto_open', 'web_auth_enabled',
-            'notifications_enabled', 'web_session_hours', 'motion'
+            'notifications_enabled', 'web_session_hours', 'motion', 'motion_cameras'
         )
         for k in keys:
             if k in payload:
@@ -660,6 +667,13 @@ class LocalCamServer:
         cfg['web_live_fps'] = max(1, min(15, int(cfg.get('web_live_fps', 8))))
         cfg['web_live_width'] = max(320, min(2560, int(cfg.get('web_live_width', 1280))))
         cfg['web_session_hours'] = max(1, min(168, int(cfg.get('web_session_hours', 12))))
+
+        selected_motion = cfg.get('motion_cameras', [])
+        if not isinstance(selected_motion, list):
+            selected_motion = []
+        cfg['motion_cameras'] = list(dict.fromkeys(
+            str(value).strip() for value in selected_motion if str(value).strip()
+        ))
 
         motion = cfg.get('motion') if isinstance(cfg.get('motion'), dict) else {}
         cfg['motion'] = {
@@ -714,6 +728,13 @@ class LocalCamServer:
                 },
             })
         cfg['cameras'] = cameras
+
+        camera_ids = {str(camera['id']) for camera in cameras}
+        cfg['motion_cameras'] = [
+            camera_id for camera_id in cfg.get('motion_cameras', [])
+            if camera_id in camera_ids
+        ]
+
         save_config(cfg)
         self.rebuild_streams()
         return self.safe_settings()
