@@ -267,6 +267,112 @@ def _probe_batch(ffmpeg_path: str, candidates: list[tuple[str, str]], username: 
     return None, checked
 
 
+def _capture_probe(ffmpeg_path: str, target: str, transport: str, user_agent: str,
+                 timeout_seconds: int) -> tuple[bool, bytes, str]:
+    cmd = [
+        ffmpeg_path,
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-rtsp_transport',
+        transport,
+        '-timeout',
+        str(timeout_seconds * 1_000_000),
+        '-probesize',
+        '8000000',
+        '-analyzeduration',
+        '3000000',
+        '-i',
+        target,
+        '-map',
+        '0:v:0',
+        '-an',
+        '-sn',
+        '-dn',
+        '-frames:v',
+        '1',
+        '-q:v',
+        '4',
+        '-f',
+        'mjpeg',
+        'pipe:1',
+    ]
+    if user_agent:
+        cmd[4:4] = ['-user_agent', user_agent]
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds + 2,
+        )
+    except FileNotFoundError:
+        return False, b'', 'FFmpeg executable not found'
+    except subprocess.TimeoutExpired:
+        return False, b'', f'RTSP snapshot timed out using {transport.upper()}'
+    if proc.returncode == 0 and proc.stdout:
+        return True, proc.stdout, ''
+    error = proc.stderr.decode('utf-8', 'replace').strip()
+    return False, b'', error.splitlines()[-1] if error else f'RTSP snapshot failed using {transport.upper()}'
+
+
+def _probe_one_with_snapshot(ffmpeg_path: str, candidate: str, username: str, password: str,
+                             timeout_seconds: int, method: str) -> dict[str, Any]:
+    target = with_credentials(candidate, username, password)
+    # Prefer TCP because the camera port itself is confirmed open. Try both
+    # known-compatible client identities before falling back to UDP.
+    stages = (
+        (
+            ('tcp', RTSP_USER_AGENT, 'TCP (VLC-compatible)'),
+            ('tcp', None, 'TCP (FFmpeg default)'),
+        ),
+        (
+            ('udp', RTSP_USER_AGENT, 'UDP (VLC-compatible)'),
+            ('udp', None, 'UDP (FFmpeg default)'),
+        ),
+    )
+    errors: list[str] = []
+    for attempts in stages:
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix='rtsp-frame') as executor:
+            futures = [
+                executor.submit(
+                    _capture_probe,
+                    ffmpeg_path,
+                    target,
+                    transport,
+                    user_agent or '',
+                    timeout_seconds,
+                )
+                for transport, user_agent, _label in attempts
+            ]
+            for future, attempt in zip(futures, attempts):
+                transport, user_agent, label = attempt
+                try:
+                    ok, frame, error = future.result()
+                except Exception as exc:
+                    ok, frame, error = False, b'', str(exc)
+                if ok:
+                    return {
+                        'ok': True,
+                        'url': redact_rtsp_url(candidate),
+                        'suggested_url': candidate,
+                        'transport': transport,
+                        'user_agent': user_agent or 'Lavf/default',
+                        'method': method,
+                        'preview': __import__('base64').b64encode(frame).decode('ascii'),
+                        'preview_mime': 'image/jpeg',
+                    }
+                if error:
+                    errors.append(f'{label}: {error}')
+    return {
+        'ok': False,
+        'error': '\n'.join(errors),
+        'url': redact_rtsp_url(candidate),
+        'suggested_url': candidate,
+        'method': method,
+    }
+
+
 def _probe_all(ffmpeg_path: str, candidates: list[tuple[str, str]], username: str, password: str,
               timeout_seconds: int, seen: set[str], failures: list[str], checked: int) -> tuple[list[dict[str, Any]], int]:
     pending = [(candidate, method) for candidate, method in candidates if candidate not in seen]
@@ -277,7 +383,15 @@ def _probe_all(ffmpeg_path: str, candidates: list[tuple[str, str]], username: st
     found: list[dict[str, Any]] = []
     executor = ThreadPoolExecutor(max_workers=min(4, len(pending)), thread_name_prefix='rtsp-probe-all')
     futures = {
-        executor.submit(test_rtsp, ffmpeg_path, candidate, username, password, timeout_seconds): (candidate, method)
+        executor.submit(
+            _probe_one_with_snapshot,
+            ffmpeg_path,
+            candidate,
+            username,
+            password,
+            timeout_seconds,
+            method,
+        ): (candidate, method)
         for candidate, method in pending
     }
     try:
@@ -289,15 +403,7 @@ def _probe_all(ffmpeg_path: str, candidates: list[tuple[str, str]], username: st
             except Exception as exc:
                 result = {'ok': False, 'error': str(exc)}
             if result.get('ok'):
-                found.append({
-                    'ok': True,
-                    'url': redact_rtsp_url(candidate),
-                    'suggested_url': candidate,
-                    'transport': result.get('transport', ''),
-                    'user_agent': result.get('user_agent', ''),
-                    'method': method,
-                    'candidates_checked': checked,
-                })
+                found.append(result)
             else:
                 failure = _failure_for(candidate, result)
                 if failure:
@@ -305,50 +411,6 @@ def _probe_all(ffmpeg_path: str, candidates: list[tuple[str, str]], username: st
     finally:
         executor.shutdown(wait=True)
     return found, checked
-
-
-def snapshot_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
-                 timeout_seconds: int = 3) -> dict[str, Any]:
-    target = with_credentials(url, username, password)
-    errors: list[str] = []
-    for transport in RTSP_TRANSPORTS:
-        cmd = [
-            ffmpeg_path, '-hide_banner', '-loglevel', 'error',
-            '-rtsp_transport', transport,
-            '-user_agent', RTSP_USER_AGENT,
-            '-timeout', str(timeout_seconds * 1_000_000),
-            '-probesize', '3000000',
-            '-analyzeduration', '1000000',
-            '-i', target,
-            '-map', '0:v:0',
-            '-an',
-            '-frames:v', '1',
-            '-q:v', '4',
-            '-f', 'mjpeg',
-            'pipe:1',
-        ]
-        try:
-            proc = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=timeout_seconds + 3,
-            )
-        except FileNotFoundError:
-            return {'ok': False, 'error': 'FFmpeg executable not found'}
-        except subprocess.TimeoutExpired:
-            errors.append(f'{transport.upper()}: snapshot timed out')
-            continue
-        if proc.returncode == 0 and proc.stdout:
-            return {
-                'ok': True,
-                'mime': 'image/jpeg',
-                'data': __import__('base64').b64encode(proc.stdout).decode('ascii'),
-            }
-        if proc.stderr:
-            errors.append(proc.stderr.decode('utf-8', 'replace').strip().splitlines()[-1])
-    return {'ok': False, 'error': '\n'.join(e for e in errors if e) or 'Could not capture a snapshot.'}
-
 
 def _channel_candidates(base: str) -> list[str]:
     return [base + path for path in CHANNEL_RTSP_PATHS]
