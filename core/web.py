@@ -578,7 +578,16 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                     return self._error(400, 'Camera RTSP URL is required.')
                 result = discover_and_test_rtsp(self.server_app.cfg()['ffmpeg_path'], url, username, password, 2)
                 return self._json(result)
-            if path == '/api/settings':
+            if path == '/api/camera-layout':
+            if not self.server_app.role(self, 'admin', 'operator'):
+                return self._error(403, 'Operator role required')
+            try:
+                result = self.server_app.save_camera_layout(self._body(100_000))
+                return self._json(result)
+            except (TypeError, ValueError, KeyError) as exc:
+                return self._error(400, str(exc))
+
+        if path == '/api/settings':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
                 return self._json(self.server_app.save_settings(self._body()))
