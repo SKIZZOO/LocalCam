@@ -374,7 +374,11 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 quality = (q.get('quality') or ['high'])[0].lower()
                 if quality not in ('low', 'medium', 'high', 'ultra'):
                     quality = 'high'
-                return stream.mjpeg(self, quality=quality)
+                try:
+                    sync_at = float((q.get('sync') or ['0'])[0])
+                except (TypeError, ValueError):
+                    sync_at = 0.0
+                return stream.mjpeg(self, quality=quality, sync_at=sync_at)
             if path.startswith('/api/snapshot/'):
                 sid = urllib.parse.unquote(path.rsplit('/', 1)[-1])
                 stream = self.server_app.streams.get(sid)
