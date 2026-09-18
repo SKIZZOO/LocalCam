@@ -1185,10 +1185,46 @@ function setupCameraSettings() {
 }
 
 async function testCamera(id) {
-  const data = await api(`/api/health?camera=${encodeURIComponent(id)}`);
-  const probe = data[id]?.probe;
-  if (probe?.ok) showToast('RTSP test passed.', 'success');
-  else showToast(`RTSP test failed: ${probe?.error || 'unknown error'}`, 'error');
+  const block = document.querySelector(`.camera-block[data-camera-id="${CSS.escape(String(id))}"]`)
+    || [...document.querySelectorAll('.camera-block')].find((item) => String(item.querySelector('[data-k="id"]')?.value || '').trim() === String(id));
+  const urlField = block?.querySelector('[data-k="url"]');
+  const usernameField = block?.querySelector('[data-k="username"]');
+  const passwordField = block?.querySelector('[data-k="password"]');
+  const url = String(urlField?.value || '').trim();
+  const username = String(usernameField?.value || '').trim();
+  const password = String(passwordField?.value || '');
+
+  if (!url) {
+    showToast('Enter an RTSP address first.', 'error');
+    return;
+  }
+
+  // Test the values currently in the editor rather than the last-saved
+  // server state. This makes Test RTSP useful before Save and lets a root
+  // rtsp://host:554/ address automatically find the actual stream path.
+  const result = await api('/api/camera-assist', {
+    timeoutMs: 20000,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ camera_id: String(id), url, username, password })
+  });
+
+  if (!result.ok) {
+    showToast(`RTSP test failed: ${result.error || 'No usable RTSP stream was found.'}`, 'error');
+    return;
+  }
+
+  const suggested = String(result.suggested_url || result.streams?.[0]?.suggested_url || '').trim();
+  if (suggested && urlField && suggested !== url) {
+    urlField.value = suggested;
+    markCameraEditorDirty();
+  }
+  showToast(
+    suggested && suggested !== url
+      ? `RTSP test passed. Stream path found: ${suggested}`
+      : 'RTSP test passed.',
+    'success'
+  );
 }
 
 async function testPTZ(id) {
