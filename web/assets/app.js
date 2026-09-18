@@ -441,7 +441,7 @@ function setupLiveLayoutActions() {
   const grid = $('cameraGrid');
   if (!arrange || !save || !cancel || !grid) return;
 
-  arrange.hidden = !can('control');
+  arrange.hidden = false;
   save.hidden = true;
   cancel.hidden = true;
 
