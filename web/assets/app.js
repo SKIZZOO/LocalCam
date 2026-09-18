@@ -1250,11 +1250,12 @@ async function saveSettings() {
   }), 800);
 }
 
-async function loadUsers() {
+async function loadUsers(force = false) {
   if (state.auth?.user?.role !== 'admin') return;
-  const users = Array.isArray(state.settings?.users)
+  const users = !force && Array.isArray(state.settings?.users)
     ? state.settings.users
     : await api('/api/users');
+  state.settings = { ...(state.settings || {}), users };
   $('userEditor').innerHTML = users.map((user) => `
     <div class="user-row">
       <div><b>${esc(user.username)}</b><small>${esc(user.role)} · ${user.enabled ? 'enabled' : 'disabled'} · last login ${esc(user.last_login || 'never')}</small></div>
@@ -1275,7 +1276,7 @@ function setupSecurityActions() {
       await api('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, role: $('newRole').value }) });
       $('newUsername').value = '';
       $('newPassword').value = '';
-      await loadUsers();
+      await loadUsers(true);
       showToast('User created.', 'success');
     } catch (error) { showToast(error.message, 'error'); }
   });
@@ -1286,7 +1287,7 @@ function setupSecurityActions() {
     try {
       await api(`/api/users/${select.dataset.userRole}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: select.value }) });
       showToast('User role updated.', 'success');
-      await loadUsers();
+      await loadUsers(true);
     } catch (error) { showToast(error.message, 'error'); }
   });
 
@@ -1296,12 +1297,12 @@ function setupSecurityActions() {
     try {
       if (toggle) {
         await api(`/api/users/${toggle.dataset.toggleUser}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: toggle.dataset.enabled !== '1' }) });
-        await loadUsers();
+        await loadUsers(true);
       }
       if (remove) {
         if (!confirm('Delete this user account?')) return;
         await api(`/api/users/${remove.dataset.deleteUser}`, { method: 'DELETE' });
-        await loadUsers();
+        await loadUsers(true);
       }
     } catch (error) { showToast(error.message, 'error'); }
   });
