@@ -1227,12 +1227,15 @@ async function saveSettings() {
     // camera editor was actually changed in this page session.
     cameras: state.cameraEditorDirty ? collectCameras() : (state.settings.cameras || [])
   };
-  const result = await api('/api/settings', { timeoutMs: 8000, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  state.settings = result;
+  const result = await api('/api/settings', { timeoutMs: 5000, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const savedSettings = result.settings || result;
+  state.settings = savedSettings;
   state.cameraEditorDirty = false;
-  $('settingsStatus').textContent = 'Settings saved. Some server changes apply after restart.';
+  $('settingsStatus').textContent = result.queued
+    ? 'Settings queued. LocalCam is applying the changes in the background.'
+    : 'Settings saved. Some server changes apply after restart.';
   renderCameraEditor(state.settings.cameras || []);
-  showToast('Settings saved. Dashboard refresh is running in the background.', 'success');
+  showToast(result.queued ? 'Settings queued for background save.' : 'Settings saved.', 'success');
   Promise.all([loadInfo(), loadStreams()]).catch((error) => {
     reportClientIssue('refresh', 'Post-save dashboard refresh failed', error?.message || String(error));
   });
