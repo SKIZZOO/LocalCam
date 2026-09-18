@@ -512,17 +512,46 @@ class LocalCamServer:
 
     def rebuild_streams(self):
         cfg = self.cfg()
+        cameras = [dict(item) for item in cfg.get('cameras', []) if isinstance(item, dict)]
+        changed = False
+        used_ids = set()
+
+        def slug(value):
+            return re.sub(r'[^a-z0-9]+', '-', str(value).lower()).strip('-')
+
+        for i, c in enumerate(cameras):
+            c.setdefault('id', f'camera-{i + 1}')
+            c.setdefault('name', f'Camera {i + 1}')
+            c.setdefault('username', 'admin')
+            c.setdefault('password', '')
+            c.setdefault('ptz', {})
+            camera_id = str(c.get('id', '')).strip() or f'camera-{i + 1}'
+            if camera_id in used_ids:
+                base = slug(c.get('name')) or f'camera-{i + 1}'
+                candidate = base
+                suffix = 2
+                while candidate in used_ids:
+                    candidate = f'{base}-{suffix}'
+                    suffix += 1
+                camera_id = candidate
+                c['id'] = camera_id
+                changed = True
+            else:
+                c['id'] = camera_id
+            used_ids.add(camera_id)
+
+        if changed:
+            cfg['cameras'] = cameras
+            selected = cfg.get('motion_cameras', [])
+            if isinstance(selected, list):
+                cfg['motion_cameras'] = [str(value) for value in selected if str(value) in used_ids]
+            save_config(cfg)
+
         with self.lock:
             for s in self.streams.values():
                 s.stop()
             self.streams.clear()
-            for i, item in enumerate(cfg.get('cameras', [])):
-                c = dict(item)
-                c.setdefault('id', f'camera-{i + 1}')
-                c.setdefault('name', f'Camera {i + 1}')
-                c.setdefault('username', 'admin')
-                c.setdefault('password', '')
-                c.setdefault('ptz', {})
+            for c in cameras:
                 if c.get('url') and 'CAMERA_IP' not in str(c.get('url')):
                     self.streams[c['id']] = StreamState(c, cfg, self.store, self.log)
 
