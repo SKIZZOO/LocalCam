@@ -178,36 +178,41 @@ def _run_probe(ffmpeg_path: str, target: str, transport: str, timeout_seconds: i
 
 def test_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
               timeout_seconds: int = 6) -> dict[str, Any]:
-    """Test RTSP using multiple client/transport combinations in parallel."""
+    """Test RTSP quickly, preferring TCP and only falling back to UDP if needed."""
     target = with_credentials(url, username, password)
-    attempts = [
-        ('tcp', RTSP_USER_AGENT, 'TCP (VLC-compatible)'),
-        ('tcp', None, 'TCP (FFmpeg default)'),
-        ('udp', RTSP_USER_AGENT, 'UDP (VLC-compatible)'),
-        ('udp', None, 'UDP (FFmpeg default)'),
-    ]
-
-    def probe(attempt):
-        transport, user_agent, label = attempt
-        return transport, user_agent, label, _run_probe(
-            ffmpeg_path, target, transport, timeout_seconds, user_agent
-        )
-
+    stages = (
+        (
+            ('tcp', RTSP_USER_AGENT, 'TCP (VLC-compatible)'),
+            ('tcp', None, 'TCP (FFmpeg default)'),
+        ),
+        (
+            ('udp', RTSP_USER_AGENT, 'UDP (VLC-compatible)'),
+            ('udp', None, 'UDP (FFmpeg default)'),
+        ),
+    )
     errors: list[str] = []
-    with ThreadPoolExecutor(max_workers=len(attempts), thread_name_prefix='rtsp-attempt') as executor:
-        futures = [executor.submit(probe, attempt) for attempt in attempts]
-        for future in as_completed(futures):
-            transport, user_agent, label, (ok, error) = future.result()
-            if ok:
-                return {
-                    'ok': True,
-                    'error': '',
-                    'transport': transport,
-                    'user_agent': user_agent or 'Lavf/default',
-                    'url': redact_rtsp_url(target),
-                }
-            if error:
-                errors.append(f'{label}: {error}')
+
+    for attempts in stages:
+        def probe(attempt):
+            transport, user_agent, label = attempt
+            return transport, user_agent, label, _run_probe(
+                ffmpeg_path, target, transport, timeout_seconds, user_agent
+            )
+
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix='rtsp-attempt') as executor:
+            futures = [executor.submit(probe, attempt) for attempt in attempts]
+            for future in as_completed(futures):
+                transport, user_agent, label, (ok, error) = future.result()
+                if ok:
+                    return {
+                        'ok': True,
+                        'error': '',
+                        'transport': transport,
+                        'user_agent': user_agent or 'Lavf/default',
+                        'url': redact_rtsp_url(target),
+                    }
+                if error:
+                    errors.append(f'{label}: {error}')
 
     return {
         'ok': False,
