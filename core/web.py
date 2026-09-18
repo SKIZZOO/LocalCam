@@ -24,6 +24,94 @@ from core.rtsp import discover_and_test_rtsp, snapshot_rtsp, test_rtsp
 
 WEB_DIR = Path(__file__).resolve().parent.parent / 'web'
 
+_CAMERA_DISCOVERY_CACHE_SECONDS = 10.0
+
+
+def _camera_discovery_worker(server_app, job_id: str, subnet_text: str) -> None:
+    """Run a gentle LAN RTSP port scan and publish progress for the UI."""
+    try:
+        network = ipaddress.ip_network(subnet_text, strict=False)
+        hosts = list(network.hosts())
+        ports = (554, 8554, 10554)
+        targets = [(str(host), port) for host in hosts for port in ports]
+        total = len(targets)
+
+        with server_app.camera_discovery_lock:
+            job = server_app.camera_discovery_job
+            if not job or job.get('id') != job_id:
+                return
+            job.update({
+                'status': 'running',
+                'phase': 'Checking RTSP ports gently to avoid overwhelming cameras or the LAN…',
+                'total': total,
+                'scanned': 0,
+                'found': 0,
+                'results': [],
+            })
+
+        def probe(target):
+            host, port = target
+            try:
+                with socket.create_connection((host, port), timeout=0.45):
+                    return {'host': host, 'port': port}
+            except OSError:
+                return None
+
+        found = []
+        # Keep concurrency modest. A 48-worker full /24 scan can cause some
+        # inexpensive camera RTSP stacks to temporarily stop answering after a
+        # couple of scans.
+        with ThreadPoolExecutor(max_workers=20) as pool:
+            futures = {pool.submit(probe, target): target for target in targets}
+            for future in as_completed(futures):
+                result = future.result()
+                scanned = None
+                with server_app.camera_discovery_lock:
+                    job = server_app.camera_discovery_job
+                    if not job or job.get('id') != job_id:
+                        return
+                    job['scanned'] += 1
+                    scanned = job['scanned']
+                    if result:
+                        found.append(result)
+                        job['found'] = len(found)
+                        job['results'] = sorted(
+                            found,
+                            key=lambda row: (ipaddress.ip_address(row['host']), row['port'])
+                        )
+                    if scanned == total or scanned % 25 == 0:
+                        job['phase'] = f'Scanning RTSP ports… {scanned}/{total} checks complete · {len(found)} candidate{"s" if len(found) != 1 else ""} found'
+
+        found.sort(key=lambda row: (ipaddress.ip_address(row['host']), row['port']))
+        result = {
+            'results': found,
+            'scanned_addresses': len(hosts),
+            'ports': list(ports),
+        }
+        with server_app.camera_discovery_lock:
+            server_app.camera_discovery_cache[subnet_text] = {
+                'saved_at': time.time(),
+                'result': result,
+            }
+            if server_app.camera_discovery_job and server_app.camera_discovery_job.get('id') == job_id:
+                server_app.camera_discovery_job.update({
+                    'status': 'completed',
+                    'phase': f'Scan complete · {len(found)} RTSP candidate{"s" if len(found) != 1 else ""} found',
+                    'result': result,
+                    'finished_at': time.time(),
+                })
+    except Exception as exc:
+        with server_app.camera_discovery_lock:
+            if server_app.camera_discovery_job and server_app.camera_discovery_job.get('id') == job_id:
+                server_app.camera_discovery_job.update({
+                    'status': 'error',
+                    'phase': 'Scan failed',
+                    'error': str(exc),
+                    'finished_at': time.time(),
+                })
+
+
+
 
 _NEW_RECORDING_RE = re.compile(
     r'(?P<stamp>\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})-(?P<camera>.+)-(?P<reason>CONTINUOUS|MOTION|MANUAL)\.mkv$',
@@ -398,29 +486,73 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                     network = ipaddress.ip_network(str(x.get('subnet', '')).strip(), strict=False)
                     if network.version != 4 or not network.is_private or network.num_addresses > 256:
                         return self._error(400, 'Enter a private IPv4 subnet with no more than 256 addresses (for example, 192.168.1.0/24).')
-                    hosts = list(network.hosts())
-                    ports = (554, 8554, 10554)
-                    targets = [(str(host), port) for host in hosts for port in ports]
+                    subnet_text = str(network)
 
-                    def probe(target):
-                        host, port = target
-                        try:
-                            with socket.create_connection((host, port), timeout=0.35):
-                                return {'host': host, 'port': port}
-                        except OSError:
-                            return None
+                    with self.server_app.camera_discovery_lock:
+                        now = time.time()
+                        cached = self.server_app.camera_discovery_cache.get(subnet_text)
+                        if cached and now - float(cached.get('saved_at', 0)) < _CAMERA_DISCOVERY_CACHE_SECONDS:
+                            result = dict(cached['result'])
+                            return self._json({
+                                'status': 'completed',
+                                'cached': True,
+                                'results': result['results'],
+                                'scanned_addresses': result['scanned_addresses'],
+                                'ports': result['ports'],
+                                'phase': 'Using the result from the last few seconds to avoid hammering the cameras.'
+                            })
 
-                    found = []
-                    with ThreadPoolExecutor(max_workers=48) as pool:
-                        futures = [pool.submit(probe, target) for target in targets]
-                        for future in as_completed(futures):
-                            result = future.result()
-                            if result:
-                                found.append(result)
-                    found.sort(key=lambda row: (ipaddress.ip_address(row['host']), row['port']))
-                    return self._json({'results': found, 'scanned_addresses': len(hosts), 'ports': list(ports)})
+                        current = self.server_app.camera_discovery_job
+                        if current and current.get('status') == 'running':
+                            return self._json({
+                                'status': 'running',
+                                'job_id': current['id'],
+                                'phase': current.get('phase', 'Scan already running…'),
+                                'scanned': current.get('scanned', 0),
+                                'total': current.get('total', network.num_addresses * 3),
+                                'found': current.get('found', 0),
+                            })
+
+                        job_id = secrets.token_urlsafe(12)
+                        self.server_app.camera_discovery_job = {
+                            'id': job_id,
+                            'status': 'running',
+                            'phase': 'Preparing the RTSP port scan…',
+                            'subnet': subnet_text,
+                            'scanned': 0,
+                            'total': (network.num_addresses - 2 if network.num_addresses > 2 else 0) * 3,
+                            'found': 0,
+                            'results': [],
+                            'started_at': now,
+                        }
+
+                    threading.Thread(
+                        target=_camera_discovery_worker,
+                        args=(self.server_app, job_id, subnet_text),
+                        daemon=True,
+                        name='camera-discovery',
+                    ).start()
+                    return self._json({
+                        'status': 'running',
+                        'job_id': job_id,
+                        'phase': 'Preparing the RTSP port scan…',
+                        'scanned': 0,
+                        'total': self.server_app.camera_discovery_job.get('total', 0),
+                        'found': 0,
+                    }, status=202)
                 except ValueError:
                     return self._error(400, 'Enter a valid private IPv4 subnet, such as 192.168.1.0/24.')
+
+            if path == '/api/camera-discovery/status':
+                if not self.server_app.role(self, 'admin'):
+                    return self._error(403, 'Admin role required')
+                job_id = (q.get('job') or [''])[0]
+                with self.server_app.camera_discovery_lock:
+                    job = self.server_app.camera_discovery_job
+                    if not job or job.get('id') != job_id:
+                        return self._error(404, 'Discovery job not found. Start a new network scan.')
+                    response = dict(job)
+                return self._json(response)
             if path == '/api/camera-assist':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
