@@ -21,6 +21,7 @@ def test_motion_detector_debounces_real_change():
 
     assert detector._compare(quiet) is True
     assert detector._compare(quiet) is True
+    assert detector._compare(quiet) is True
     assert detector._compare(quiet) is False
 
 
