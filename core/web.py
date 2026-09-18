@@ -353,7 +353,10 @@ class LocalCamHandler(BaseHTTPRequestHandler):
             if path == '/api/settings':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
-                return self._json(self.server_app.safe_settings())
+                # User accounts are loaded separately by the Security tab.
+                # Keep the settings endpoint independent of SQLite so it cannot
+                # stall while motion/events are being written.
+                return self._json(self.server_app.safe_settings(include_users=False))
             if path == '/api/folder-picker':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
