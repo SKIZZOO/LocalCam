@@ -163,6 +163,16 @@ def safe_join(root: Path, rel: str) -> Path | None:
 class LocalCamHandler(BaseHTTPRequestHandler):
     server_app: LocalCamServer
 
+    def handle_one_request(self):
+        started = time.monotonic()
+        try:
+            return super().handle_one_request()
+        finally:
+            elapsed = time.monotonic() - started
+            path = str(getattr(self, 'path', ''))
+            if elapsed >= 2.0 and not path.startswith('/live/'):
+                self.server_app.log(f'WEB SLOW: {getattr(self, "command", "")} {path[:500]} took {elapsed:.2f}s')
+
     def log_message(self, fmt, *args):
         # Keep the console focused on meaningful activity. Successful page/API
         # requests are routine and are intentionally not printed.
@@ -289,6 +299,10 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 })
             if path == '/api/info':
                 return self._json(self.server_app.info())
+            if path == '/api/diagnostics':
+                if not self.server_app.role(self, 'admin', 'operator'):
+                    return self._error(403, 'Operator role required')
+                return self._json(self.server_app.diagnostics())
             if path == '/api/camera-discovery/status':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
@@ -586,6 +600,19 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                     return self._json(result)
                 except (TypeError, ValueError, KeyError) as exc:
                     return self._error(400, str(exc))
+            if path == '/api/client-log':
+                if not self.server_app.role(self, 'admin', 'operator'):
+                    return self._error(403, 'Operator role required')
+                x = self._body(50_000)
+                level = str(x.get('level', 'error')).lower()
+                message = str(x.get('message', '')).strip()
+                detail = str(x.get('detail', '')).strip()
+                if not message:
+                    return self._error(400, 'Client log message is required.')
+                if len(message) > 2000 or len(detail) > 8000:
+                    return self._error(413, 'Client log entry is too large.')
+                self.server_app.log(f'CLIENT {level.upper()}: {message}' + (f' | {detail}' if detail else ''))
+                return self._json({'ok': True})
             if path == '/api/settings':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
