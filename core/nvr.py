@@ -565,8 +565,8 @@ class LocalCamServer:
         self.camera_discovery_job = None
         self.camera_discovery_cache = {}
         self.store = EventStore(self.base_dir / 'localcam.sqlite3')
-        cfg = load_config()
-        self.store.ensure_legacy_admin(str(cfg.get('web_password_hash', '')))
+        self._config_cache = load_config()
+        self.store.ensure_legacy_admin(str(self._config_cache.get('web_password_hash', '')))
         self.ptz = PTZController(self.log)
         self.webrtc = WebRTCManager(self.log)
         self.streams = {}
@@ -597,7 +597,15 @@ class LocalCamServer:
             pass
 
     def cfg(self):
-        return load_config()
+        # Keep request authentication/settings reads in memory. Re-reading and
+        # re-parsing config.json for every HTTP request made the UI vulnerable
+        # to transient Windows file contention and could stall all settings work.
+        with self.config_lock:
+            return json.loads(json.dumps(self._config_cache))
+
+    def _set_cfg_cache(self, cfg):
+        with self.config_lock:
+            self._config_cache = json.loads(json.dumps(cfg))
 
     def _preview_key(self, url, username, password, quality):
         cfg = self.cfg()
@@ -1091,6 +1099,7 @@ class LocalCamServer:
         with self.config_lock:
             write_started = time.monotonic()
             save_config(cfg)
+            self._config_cache = json.loads(json.dumps(cfg))
         self.log(f'Settings config write completed in {(time.monotonic() - write_started):.3f}s; total={time.monotonic() - started:.3f}s; camera_changed={camera_changed}, runtime_changed={runtime_changed}')
 
         if runtime_changed:
@@ -1138,6 +1147,7 @@ class LocalCamServer:
 
         cfg['cameras'] = ordered
         save_config(cfg)
+        self._set_cfg_cache(cfg)
 
         with self.lock:
             current = self.streams
