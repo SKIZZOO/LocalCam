@@ -808,7 +808,7 @@ function renderMotionCameraPicker(cameras) {
 }
 function renderCameraEditor(cameras) {
   $('cameraEditor').innerHTML = cameras.length ? cameras.map((camera, index) => `
-    <div class="camera-block" data-index="${index}">
+    <div class="camera-block" data-index="${index}" data-camera-id="${esc(camera.id)}">
       <div class="camera-row">
         <input data-k="id" value="${esc(camera.id)}" placeholder="ID">
         <input data-k="name" value="${esc(camera.name)}" placeholder="Name">
@@ -816,7 +816,7 @@ function renderCameraEditor(cameras) {
         <input data-k="username" value="${esc(camera.username || 'admin')}" placeholder="Username">
         <input data-k="password" type="password" placeholder="Keep existing password">
         <button class="icon-btn" data-test-camera="${esc(camera.id)}">Test RTSP</button>
-        <button class="icon-btn danger-text" data-remove-camera="${index}">Remove</button>
+        <button class="icon-btn danger-text" data-remove-camera="${esc(camera.id)}">Remove</button>
       </div>
       <div class="ptz-editor">
         <label><input data-k="ptzEnabled" type="checkbox" ${camera.ptz?.enabled ? 'checked' : ''}> Enable ONVIF PTZ</label>
@@ -836,7 +836,8 @@ function collectCameras() {
   }
   return blocks.map((block, index) => {
     const get = (key) => block.querySelector(`[data-k="${key}"]`);
-    const old = state.settings.cameras[Number(block.dataset.index)] || {};
+    const originalId = String(block.dataset.cameraId || '').trim();
+    const old = state.settings.cameras.find((camera) => String(camera.id) === originalId) || {};
     const oldPtz = old.ptz || {};
     return {
       id: (get('id')?.value || '').trim() || `camera-${index + 1}`,
@@ -877,7 +878,8 @@ function setupCameraSettings() {
     try {
       if (remove) {
         markCameraEditorDirty();
-        state.settings.cameras.splice(Number(remove.dataset.removeCamera), 1);
+        const removeId = String(remove.dataset.removeCamera || '');
+        state.settings.cameras = state.settings.cameras.filter((camera) => String(camera.id) !== removeId);
         renderCameraEditor(state.settings.cameras);
         renderMotionCameraPicker(state.settings.cameras);
       }
