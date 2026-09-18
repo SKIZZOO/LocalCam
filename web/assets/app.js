@@ -1,4 +1,4 @@
-const state = { info: null, settings: null, streams: [], auth: null, liveQuality: localStorage.getItem('localcam.liveQuality') || 'high', cameraEditorDirty: false };
+const state = { info: null, settings: null, streams: [], auth: null, liveQuality: localStorage.getItem('localcam.liveQuality') || 'high', cameraEditorDirty: false, liveSyncAt: 0 };
 const webrtcPeers = new Map();
 let webrtcGeneration = 0;
 
@@ -312,6 +312,11 @@ function renderDashboard() {
     return;
   }
 
+  // All camera MJPEG connections are given the same future start time so
+  // the browser and server release the initial frames together.
+  if (!state.liveSyncAt || state.liveSyncAt < Date.now() / 1000) {
+    state.liveSyncAt = Date.now() / 1000 + 0.8;
+  }
   grid.innerHTML = state.streams.map((stream) => {
     const quality = selectedLiveQuality();
     const badge = stream.motion ? 'MOTION' : stream.recording ? 'REC' : stream.online ? 'LIVE' : 'OFFLINE';
@@ -337,7 +342,7 @@ function renderDashboard() {
 
     return `<article class="cam">
       <div class="cam-head"><div class="cam-title">${esc(stream.name)}</div><span class="pill ${cls}">${badge}</span></div>
-      <div class="cam-body"><img src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay" data-live-transport>MJPEG · ${quality}</div></div>
+      <div class="cam-body"><img decoding="async" fetchpriority="high" src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}&sync=${encodeURIComponent(state.liveSyncAt.toFixed(3))}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay" data-live-transport>MJPEG · ${quality}</div></div>
       <div class="cam-foot"><span>${stream.online ? 'Connected' : 'Waiting for stream'}</span><div class="cam-actions"><button class="small-btn" data-action="snapshot" data-id="${esc(stream.id)}">Snapshot</button>${recordButton}</div></div>
       ${ptz}
     </article>`;
