@@ -890,9 +890,6 @@ async function testPTZ(id) {
 
 async function saveSettings() {
   if (!state.settings) return;
-  if ($('mEnabled')?.checked && !document.querySelector('[data-motion-camera]:checked')) {
-    throw new Error('Select at least one camera for motion detection before saving.');
-  }
   const payload = {
     ...state.settings,
     record_root: $('sRecordRoot').value.trim(),
