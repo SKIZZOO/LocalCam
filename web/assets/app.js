@@ -170,29 +170,80 @@ function can(action) {
 }
 
 async function api(url, options = {}) {
-  const response = await fetch(url, {
-    credentials: 'same-origin',
-    ...options
-  });
-
-  if (response.status === 401) {
-    location.replace('/login');
-    throw new Error('Authentication required');
-  }
-
-  const text = await response.text();
-  let data = {};
+  const { timeoutMs = 15000, ...requestOptions } = options;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || 15000));
+  const started = performance.now();
   try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
+    const response = await fetch(url, {
+      credentials: 'same-origin',
+      ...requestOptions,
+      signal: controller.signal
+    });
 
-  if (!response.ok) {
-    throw new Error(data.error || `HTTP ${response.status}`);
+    if (response.status === 401) {
+      location.replace('/login');
+      throw new Error('Authentication required');
+    }
+
+    const text = await response.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!response.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    return data;
+  } catch (error) {
+    const elapsed = performance.now() - started;
+    if (error?.name === 'AbortError') {
+      reportClientIssue('timeout', `API request timed out: ${url}`, `${Math.round(elapsed)}ms timeout`);
+      throw new Error(`Request timed out after ${Math.round(Number(timeoutMs) / 1000)}s: ${url}`);
+    }
+    if (elapsed >= 5000) {
+      reportClientIssue('error', `Slow API request: ${url}`, `${Math.round(elapsed)}ms · ${error?.message || error}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return data;
 }
+
+function reportClientIssue(level, message, detail = '') {
+  try {
+    const payload = JSON.stringify({
+      level,
+      message: String(message || '').slice(0, 2000),
+      detail: String(detail || '').slice(0, 8000),
+      page: location.pathname,
+      user_agent: navigator.userAgent,
+      at: new Date().toISOString()
+    });
+    fetch('/api/client-log', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      keepalive: true
+    }).catch(() => {});
+  } catch {}
+}
+
+window.addEventListener('error', (event) => {
+  reportClientIssue(
+    'javascript',
+    event.message || 'Uncaught browser error',
+    `${event.filename || ''}:${event.lineno || 0}:${event.colno || 0}`
+  );
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  reportClientIssue('promise', String(event.reason?.stack || event.reason || 'Unhandled promise rejection'));
+});
 
 function showToast(message, kind = 'info') {
   let box = $('toastBox');
@@ -268,7 +319,7 @@ function setupNavigation() {
 
 async function loadInfo() {
   try {
-    state.info = await api('/api/info');
+    state.info = await api('/api/info', { timeoutMs: 5000 });
     $('sideStatus').textContent = 'Online';
     $('sideUrl').textContent = String(state.info.url || '').replace(/^https?:\/\//, '');
     $('version').textContent = state.info.version ? `v${state.info.version}` : '';
@@ -290,7 +341,7 @@ async function loadInfo() {
 }
 
 async function loadStreams() {
-  state.streams = await api('/api/streams');
+  state.streams = await api('/api/streams', { timeoutMs: 5000 });
   renderDashboard();
   fillCameraSelects();
 }
@@ -1181,8 +1232,10 @@ async function saveSettings() {
   state.cameraEditorDirty = false;
   $('settingsStatus').textContent = 'Settings saved. Some server changes apply after restart.';
   renderCameraEditor(state.settings.cameras || []);
-  await Promise.all([loadInfo(), loadStreams()]);
-  showToast('Settings saved.', 'success');
+  showToast('Settings saved. Dashboard refresh is running in the background.', 'success');
+  Promise.all([loadInfo(), loadStreams()]).catch((error) => {
+    reportClientIssue('refresh', 'Post-save dashboard refresh failed', error?.message || String(error));
+  });
 }
 
 async function loadUsers() {
