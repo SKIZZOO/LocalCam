@@ -20,7 +20,7 @@ from typing import Any
 
 from core.config import hash_password, verify_password
 from core.nvr import LocalCamServer, safe_name, human_bytes
-from core.rtsp import discover_and_test_rtsp, test_rtsp
+from core.rtsp import discover_and_test_rtsp, snapshot_rtsp, test_rtsp
 
 WEB_DIR = Path(__file__).resolve().parent.parent / 'web'
 
@@ -198,6 +198,24 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 })
             if path == '/api/info':
                 return self._json(self.server_app.info())
+            if path == '/api/camera-snapshot':
+                if not self.server_app.role(self, 'admin'):
+                    return self._error(403, 'Admin role required')
+                x = self._body(100_000)
+                camera_id = str(x.get('camera_id', '')).strip()
+                url = str(x.get('url', '')).strip()
+                username = str(x.get('username', '')).strip()
+                password = str(x.get('password', ''))
+                saved = next((c for c in self.server_app.cfg().get('cameras', []) if str(c.get('id', '')) == camera_id), None)
+                if saved:
+                    url = url or str(saved.get('url', ''))
+                    username = username or str(saved.get('username', ''))
+                    if not password:
+                        password = str(saved.get('password', ''))
+                if not url or not url.lower().startswith('rtsp://'):
+                    return self._error(400, 'A valid RTSP feed URL is required.')
+                result = snapshot_rtsp(self.server_app.cfg()['ffmpeg_path'], url, username, password, 3)
+                return self._json(result)
             if path == '/api/settings':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
