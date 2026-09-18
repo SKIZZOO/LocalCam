@@ -635,7 +635,20 @@ class LocalCamHandler(BaseHTTPRequestHandler):
             if path == '/api/settings':
                 if not self.server_app.role(self, 'admin'):
                     return self._error(403, 'Admin role required')
-                return self._json(self.server_app.save_settings(self._body()))
+                try:
+                    payload = self._body()
+                    if not isinstance(payload, dict):
+                        return self._error(400, 'Settings payload must be an object.')
+                    self.server_app.queue_settings_save(payload)
+                    self.server_app.log('Settings HTTP request accepted and queued for background persistence.')
+                    return self._json({
+                        'queued': True,
+                        'message': 'Settings queued for saving.',
+                        'settings': self.server_app.safe_settings(include_users=False),
+                    }, status=202)
+                except Exception as exc:
+                    self.server_app.log(f'Settings queue failed: {exc}')
+                    return self._error(500, str(exc))
             if path.startswith('/api/webrtc/offer/'):
                 if not self.server_app.webrtc.available:
                     return self._error(503, self.server_app.webrtc.error or 'WebRTC is unavailable. Install the LocalCam WebRTC dependencies.')
