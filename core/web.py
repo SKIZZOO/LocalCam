@@ -862,12 +862,27 @@ class LocalCamHandler(BaseHTTPRequestHandler):
         from_dt = parse_filter(from_value)
         to_dt = parse_filter(to_value)
         results = []
-        for path in root.rglob('*.mkv'):
+
+        # Recordings are stored as <root>/<camera>/<YYYY-MM-DD>/*.mkv.
+        # A daily archive request should never walk the entire recording
+        # history, which can be tens of thousands of files.
+        if day:
+            if camera:
+                candidate_iter = root.glob(f'{safe_name(camera)}/{day}/*.mkv')
+            else:
+                candidate_iter = root.glob(f'*/{day}/*.mkv')
+        elif camera:
+            candidate_iter = root.glob(f'{safe_name(camera)}/**/*.mkv')
+        else:
+            candidate_iter = root.rglob('*.mkv')
+
+        for path in candidate_iter:
             try:
                 rel = path.relative_to(root)
                 stat = path.stat()
             except (ValueError, OSError):
                 continue
+
             meta = recording_meta(path.name, datetime.fromtimestamp(stat.st_mtime))
             start = meta['start']
             cam = meta['camera'] or (rel.parts[0] if len(rel.parts) >= 3 else path.parent.name)
@@ -900,6 +915,7 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                 'start': start.isoformat(),
                 'path': str(path.resolve()),
             })
+
         results.sort(key=lambda row: row.get('start', ''), reverse=True)
         return results
 
