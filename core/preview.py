@@ -14,11 +14,11 @@ class FastPreviewWorker:
     QUALITY_PRESETS = {
         'low': {'width': 640, 'fps': 10, 'quality': 6},
         'medium': {'width': 1280, 'fps': 15, 'quality': 4},
-        'high': {'width': 1920, 'fps': 20, 'quality': 2},
-        'ultra': {'width': 2560, 'fps': 25, 'quality': 1},
+        'high': {'width': 1920, 'fps': 15, 'quality': 2},
+        'ultra': {'width': 2560, 'fps': 15, 'quality': 1},
     }
 
-    def __init__(self, ffmpeg, url, username, password, width, fps, on_frame, quality='high'):
+    def __init__(self, ffmpeg, url, username, password, width, fps, on_frame, quality='high', logger=None):
         preset = self.QUALITY_PRESETS.get(str(quality).lower(), self.QUALITY_PRESETS['high'])
         # The dashboard quality selector is the source of truth for live
         # output size/FPS. The camera's own stream is never replaced by a
@@ -66,6 +66,7 @@ class FastPreviewWorker:
             'mjpeg',
             'pipe:1',
         ]
+        self.logger = logger
         self._listener_lock = threading.RLock()
         self.listeners = []
         if on_frame:
@@ -74,6 +75,11 @@ class FastPreviewWorker:
         self.proc = None
         self.thread = None
         self.stop_event = threading.Event()
+        self.last_frame_at = 0.0
+        self.frames = 0
+        self.restart_count = 0
+        self.consecutive_failures = 0
+        self.last_error = ''
 
     def start(self):
         if self.thread and self.thread.is_alive():
@@ -99,6 +105,9 @@ class FastPreviewWorker:
                 self.proc.kill()
             except OSError:
                 pass
+        thread = self.thread
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=2)
         self.thread = None
 
     @staticmethod
@@ -137,14 +146,26 @@ class FastPreviewWorker:
                     bufsize=0,
                     creationflags=flags,
                 )
-            except OSError:
-                time.sleep(2)
+                self.restart_count += 1
+            except OSError as exc:
+                self.consecutive_failures += 1
+                self.last_error = str(exc)
+                if self.logger:
+                    self.logger(f'Preview worker failed to start for {self._safe_target()}: {exc}')
+                self.stop_event.wait(min(15.0, 1.0 + self.consecutive_failures * 1.5))
                 continue
+
+            got_frame = False
             try:
                 while not self.stop_event.is_set() and self.proc.stdout:
                     frame = self._read_jpeg(self.proc.stdout)
                     if not frame:
                         break
+                    got_frame = True
+                    self.consecutive_failures = 0
+                    self.last_error = ''
+                    self.last_frame_at = time.time()
+                    self.frames += 1
                     with self._listener_lock:
                         listeners = list(self.listeners)
                     for listener in listeners:
@@ -158,7 +179,25 @@ class FastPreviewWorker:
                 except OSError:
                     pass
                 self.proc = None
-            time.sleep(0.5)
+
+            if not got_frame and not self.stop_event.is_set():
+                self.consecutive_failures += 1
+                self.last_error = 'FFmpeg preview ended before a frame was received.'
+                if self.logger:
+                    self.logger(
+                        f'Preview worker lost stream for {self._safe_target()} '
+                        f'(restart #{self.restart_count}, consecutive failures={self.consecutive_failures})'
+                    )
+            delay = min(15.0, 0.5 * (2 ** min(self.consecutive_failures, 5)))
+            self.stop_event.wait(delay)
+
+    def _safe_target(self):
+        try:
+            from urllib.parse import urlsplit
+            parts = urlsplit(self.cmd[self.cmd.index('-i') + 1])
+            return f'{parts.scheme}://{parts.hostname}:{parts.port or ""}{parts.path}'
+        except Exception:
+            return 'RTSP target'
 
 
 def install_preview_tuning() -> None:
