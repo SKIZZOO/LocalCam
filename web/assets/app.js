@@ -1,4 +1,4 @@
-const state = { info: null, settings: null, streams: [], auth: null, liveQuality: localStorage.getItem('localcam.liveQuality') || 'high' };
+const state = { info: null, settings: null, streams: [], auth: null, liveQuality: localStorage.getItem('localcam.liveQuality') || 'high', cameraEditorDirty: false };
 const webrtcPeers = new Map();
 let webrtcGeneration = 0;
 
@@ -728,6 +728,7 @@ async function loadSettings() {
   $('mCooldown').value = settings.motion?.cooldown_seconds ?? 15;
   $('mSnapshots').checked = !!settings.motion?.save_event_snapshots;
   $('mNotifications').checked = !!settings.notifications_enabled;
+  state.cameraEditorDirty = false;
   renderCameraEditor(settings.cameras || []);
   renderMotionCameraPicker(settings.cameras || []);
 }
@@ -829,7 +830,11 @@ function renderCameraEditor(cameras) {
 }
 
 function collectCameras() {
-  return [...document.querySelectorAll('.camera-block')].map((block, index) => {
+  const blocks = [...document.querySelectorAll('.camera-block')];
+  if (!blocks.length) {
+    return Array.isArray(state.settings?.cameras) ? state.settings.cameras.map((camera) => ({ ...camera, ptz: { ...(camera.ptz || {}) } })) : [];
+  }
+  return blocks.map((block, index) => {
     const get = (key) => block.querySelector(`[data-k="${key}"]`);
     const old = state.settings.cameras[Number(block.dataset.index)] || {};
     const oldPtz = old.ptz || {};
@@ -850,12 +855,20 @@ function collectCameras() {
   }).filter((camera) => camera.url);
 }
 
+function markCameraEditorDirty() {
+  state.cameraEditorDirty = true;
+}
+
 function setupCameraSettings() {
   $('addCamera').addEventListener('click', () => {
+    markCameraEditorDirty();
     state.settings.cameras.push({ id: `camera-${state.settings.cameras.length + 1}`, name: `Camera ${state.settings.cameras.length + 1}`, url: '', username: 'admin', password: '', ptz: { enabled: false, host: '', port: 80, username: '', password: '' } });
     renderCameraEditor(state.settings.cameras);
     renderMotionCameraPicker(state.settings.cameras);
   });
+
+  $('cameraEditor').addEventListener('input', markCameraEditorDirty);
+  $('cameraEditor').addEventListener('change', markCameraEditorDirty);
 
   $('cameraEditor').addEventListener('click', async (event) => {
     const remove = event.target.closest('[data-remove-camera]');
@@ -863,6 +876,7 @@ function setupCameraSettings() {
     const ptzTest = event.target.closest('[data-test-ptz]');
     try {
       if (remove) {
+        markCameraEditorDirty();
         state.settings.cameras.splice(Number(remove.dataset.removeCamera), 1);
         renderCameraEditor(state.settings.cameras);
         renderMotionCameraPicker(state.settings.cameras);
@@ -918,10 +932,13 @@ async function saveSettings() {
       save_event_snapshots: $('mSnapshots').checked
     },
     motion_cameras: [...document.querySelectorAll('[data-motion-camera]:checked')].map((input) => input.value),
-    cameras: collectCameras()
+    // Saving Motion/Web-server settings must not rewrite cameras unless the
+    // camera editor was actually changed in this page session.
+    cameras: state.cameraEditorDirty ? collectCameras() : (state.settings.cameras || [])
   };
   const result = await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   state.settings = result;
+  state.cameraEditorDirty = false;
   $('settingsStatus').textContent = 'Settings saved. Some server changes apply after restart.';
   renderCameraEditor(state.settings.cameras || []);
   await Promise.all([loadInfo(), loadStreams()]);
