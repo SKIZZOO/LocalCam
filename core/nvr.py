@@ -714,6 +714,8 @@ class LocalCamServer:
         threading.Thread(target=worker, daemon=True, name='motion-refresh').start()
 
     def request_rebuild(self, reason='settings changed'):
+        # Only the queue flag is protected here. Never make the HTTP settings
+        # request wait for an in-progress FFmpeg teardown/rebuild.
         with self.rebuild_lock:
             if self.rebuild_pending:
                 self.log(f'Rebuild already queued; coalescing request ({reason}).')
@@ -727,73 +729,74 @@ class LocalCamServer:
         ).start()
 
     def rebuild_streams(self):
-        with self.rebuild_lock:
-            try:
-                cfg = self.cfg()
-                cameras = [dict(item) for item in cfg.get('cameras', []) if isinstance(item, dict)]
-                changed = False
-                used_ids = set()
+        try:
+            cfg = self.cfg()
+            cameras = [dict(item) for item in cfg.get('cameras', []) if isinstance(item, dict)]
+            changed = False
+            used_ids = set()
 
-                def slug(value):
-                    return re.sub(r'[^a-z0-9]+', '-', str(value).lower()).strip('-')
+            def slug(value):
+                return re.sub(r'[^a-z0-9]+', '-', str(value).lower()).strip('-')
 
-                for i, c in enumerate(cameras):
-                    c.setdefault('id', f'camera-{i + 1}')
-                    c.setdefault('name', f'Camera {i + 1}')
-                    c.setdefault('username', 'admin')
-                    c.setdefault('password', '')
-                    c.setdefault('ptz', {})
-                    camera_id = str(c.get('id', '')).strip() or f'camera-{i + 1}'
-                    if camera_id in used_ids:
-                        base = slug(c.get('name')) or f'camera-{i + 1}'
-                        candidate = base
-                        suffix = 2
-                        while candidate in used_ids:
-                            candidate = f'{base}-{suffix}'
-                            suffix += 1
-                        camera_id = candidate
-                        c['id'] = camera_id
-                        changed = True
-                    else:
-                        c['id'] = camera_id
-                    used_ids.add(camera_id)
+            for i, c in enumerate(cameras):
+                c.setdefault('id', f'camera-{i + 1}')
+                c.setdefault('name', f'Camera {i + 1}')
+                c.setdefault('username', 'admin')
+                c.setdefault('password', '')
+                c.setdefault('ptz', {})
+                camera_id = str(c.get('id', '')).strip() or f'camera-{i + 1}'
+                if camera_id in used_ids:
+                    base = slug(c.get('name')) or f'camera-{i + 1}'
+                    candidate = base
+                    suffix = 2
+                    while candidate in used_ids:
+                        candidate = f'{base}-{suffix}'
+                        suffix += 1
+                    camera_id = candidate
+                    c['id'] = camera_id
+                    changed = True
+                else:
+                    c['id'] = camera_id
+                used_ids.add(camera_id)
 
-                if changed:
-                    cfg['cameras'] = cameras
-                    selected = cfg.get('motion_cameras', [])
-                    if isinstance(selected, list):
-                        cfg['motion_cameras'] = [str(value) for value in selected if str(value) in used_ids]
-                    save_config(cfg)
-                    self._set_cfg_cache(cfg)
+            if changed:
+                cfg['cameras'] = cameras
+                selected = cfg.get('motion_cameras', [])
+                if isinstance(selected, list):
+                    cfg['motion_cameras'] = [str(value) for value in selected if str(value) in used_ids]
+                save_config(cfg)
+                self._set_cfg_cache(cfg)
 
-                with self.lock:
-                    old_streams = list(self.streams.values())
-                    self.streams = {}
+            with self.lock:
+                old_streams = list(self.streams.values())
+                self.streams = {}
 
-                self.log(f'Stream rebuild stopping {len(old_streams)} existing stream objects.')
-                for stream in old_streams:
-                    try:
-                        stream.stop()
-                    except Exception as exc:
-                        self.log(f'Stream stop during rebuild failed for {stream.name}: {exc}')
+            self.log(f'Stream rebuild stopping {len(old_streams)} existing stream objects.')
+            for stream in old_streams:
+                try:
+                    stream.stop()
+                except Exception as exc:
+                    self.log(f'Stream stop during rebuild failed for {stream.name}: {exc}')
 
-                new_streams = {}
-                for camera in cameras:
-                    if not camera.get('url') or 'CAMERA_IP' in str(camera.get('url')):
-                        continue
-                    try:
-                        new_streams[camera['id']] = StreamState(
-                            camera, cfg, self.store, self.log, self
-                        )
-                    except Exception as exc:
-                        self.log(f'Failed to rebuild stream {camera.get("id")}: {exc}')
+            new_streams = {}
+            for camera in cameras:
+                if not camera.get('url') or 'CAMERA_IP' in str(camera.get('url')):
+                    continue
+                try:
+                    new_streams[camera['id']] = StreamState(
+                        camera, cfg, self.store, self.log, self
+                    )
+                except Exception as exc:
+                    self.log(f'Failed to rebuild stream {camera.get("id")}: {exc}')
 
-                with self.lock:
-                    self.streams = new_streams
-                self.log(f'Stream rebuild complete: {len(new_streams)} stream objects active.')
-            finally:
-                with self.rebuild_lock:
-                    self.rebuild_pending = False
+            with self.lock:
+                self.streams = new_streams
+            self.log(f'Stream rebuild complete: {len(new_streams)} stream objects active.')
+        except Exception as exc:
+            self.log(f'Stream rebuild failed: {exc}')
+        finally:
+            with self.rebuild_lock:
+                self.rebuild_pending = False
 
     def start(self):
         self.log('Starting LocalCam web server…')
