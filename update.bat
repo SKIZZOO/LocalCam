@@ -36,7 +36,7 @@ if errorlevel 1 goto zip_failed
 if not exist "%TMP%\LocalCam-main\app.py" goto zip_failed
 echo.
 echo Copying latest project files...
-robocopy "%TMP%\LocalCam-main" "%ROOT%" /E /R:2 /W:1 /XD ".git" ".venv" "recordings" "snapshots" /XF "config.json" "localcam.sqlite3" "localcam.log" "*.mkv" "*.mp4" "*.avi" "*.mov" "*.jpg" "*.jpeg"
+robocopy "%TMP%\LocalCam-main" "%ROOT%." /E /R:2 /W:1 /XD ".git" ".venv" "recordings" "snapshots" /XF "config.json" "localcam.sqlite3" "localcam.log" "*.mkv" "*.mp4" "*.avi" "*.mov" "*.jpg" "*.jpeg"
 if errorlevel 8 goto copy_failed
 
 rmdir /s /q "%TMP%" >nul 2>&1
@@ -120,7 +120,7 @@ if errorlevel 1 goto zip_failed
 if not exist "%TMP%\LocalCam-main\app.py" goto zip_failed
 echo.
 echo Copying latest project files while preserving local data...
-robocopy "%TMP%\LocalCam-main" "%ROOT%" /E /R:2 /W:1 /XD ".git" ".venv" "recordings" "snapshots" /XF "config.json" "localcam.sqlite3" "localcam.log" "*.mkv" "*.mp4" "*.avi" "*.mov" "*.jpg" "*.jpeg"
+robocopy "%TMP%\LocalCam-main" "%ROOT%." /E /R:2 /W:1 /XD ".git" ".venv" "recordings" "snapshots" /XF "config.json" "localcam.sqlite3" "localcam.log" "*.mkv" "*.mp4" "*.avi" "*.mov" "*.jpg" "*.jpeg"
 if errorlevel 8 goto copy_failed
 
 rmdir /s /q "%TMP%" >nul 2>&1
