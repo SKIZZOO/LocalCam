@@ -291,7 +291,14 @@
     refreshTimer = setTimeout(() => refresh(), 300);
   };
 
-  new MutationObserver(() => scheduleRefresh()).observe(grid, { childList:true, subtree:true });
+  // Only refresh when camera cards themselves are added or removed. The viewer
+  // adds toolbars and controls inside each card; observing the whole subtree
+  // made those mutations schedule another /api/streams request, which in turn
+  // could create a permanent polling loop and starve the web server.
+  new MutationObserver((mutations) => {
+    if (!mutations.some((mutation) => mutation.addedNodes.length || mutation.removedNodes.length)) return;
+    scheduleRefresh();
+  }).observe(grid, { childList:true });
   window.addEventListener('resize', () => viewers.forEach(apply));
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) refresh();
