@@ -1041,15 +1041,21 @@ class LocalCamServer:
         cfg['snapshot_root'] = normalize_storage_path(
             cfg.get('snapshot_root'), self.base_dir / 'snapshots'
         )
-        cfg['record_mode'] = cfg.get('record_mode') if cfg.get('record_mode') in ('continuous', 'motion', 'manual') else 'continuous'
+        cfg['record_mode'] = cfg.get('record_mode') if cfg.get('record_mode') in ('continuous', 'motion', 'manual') else 'manual'
 
         old = previous_cameras
+        previous_by_id = {
+            str(item.get('id', '')).strip(): item
+            for item in old
+            if isinstance(item, dict) and str(item.get('id', '')).strip()
+        }
         cameras = []
         used_ids = set()
         for i, item in enumerate(payload.get('cameras', old)):
             if not isinstance(item, dict) or not str(item.get('url', '')).strip():
                 continue
-            prev = old[i] if i < len(old) else {}
+            camera_id_hint = str(item.get('id', '')).strip()
+            prev = previous_by_id.get(camera_id_hint, old[i] if i < len(old) else {})
             pp = item.get('password', '')
             pp = prev.get('password', '') if pp == '********' else str(pp)
             ptz = item.get('ptz') or {}
