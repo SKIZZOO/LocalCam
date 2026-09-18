@@ -160,7 +160,7 @@ def _run_probe(ffmpeg_path: str, target: str, transport: str, timeout_seconds: i
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=timeout_seconds + 3,
+            timeout=max(1, int(timeout_seconds)),
             text=True,
             encoding='utf-8',
             errors='replace',
