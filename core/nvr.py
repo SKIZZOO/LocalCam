@@ -116,7 +116,10 @@ class PreviewWorker:
             'mjpeg',
             'pipe:1',
         ]
-        self.on_frame = on_frame
+        self._listener_lock = threading.RLock()
+        self.listeners = []
+        if on_frame:
+            self.listeners.append(on_frame)
         self.proc = None
         self.thread = None
         self.stop_event = threading.Event()
@@ -127,6 +130,16 @@ class PreviewWorker:
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._run, daemon=True, name='preview')
         self.thread.start()
+
+    def add_listener(self, callback):
+        with self._listener_lock:
+            if callback not in self.listeners:
+                self.listeners.append(callback)
+
+    def remove_listener(self, callback):
+        with self._listener_lock:
+            self.listeners = [listener for listener in self.listeners if listener != callback]
+            return not self.listeners
 
     def stop(self):
         self.stop_event.set()
@@ -181,7 +194,13 @@ class PreviewWorker:
                     frame = self._read_jpeg(self.proc.stdout)
                     if not frame:
                         break
-                    self.on_frame(frame)
+                    with self._listener_lock:
+                        listeners = list(self.listeners)
+                    for listener in listeners:
+                        try:
+                            listener(frame)
+                        except Exception:
+                            pass
             finally:
                 try:
                     self.proc.kill()
@@ -192,11 +211,13 @@ class PreviewWorker:
 
 
 class StreamState:
-    def __init__(self, camera: dict[str, Any], cfg: dict[str, Any], store: EventStore, logger):
+    def __init__(self, camera: dict[str, Any], cfg: dict[str, Any], store: EventStore, logger, server=None):
         self.camera = dict(camera)
         self.cfg = cfg
         self.store = store
         self.logger = logger
+        self.server = server
+        self.preview_key = None
         self.lock = threading.Condition()
         self.frame = None
         self.seq = 0
@@ -238,17 +259,27 @@ class StreamState:
     def _start(self, quality=None):
         self.preview_quality = str(quality or self.preview_quality or self.cfg.get('live_quality', 'high')).lower()
         self.preview_url = quality_rtsp_url(self.camera['url'], self.preview_quality)
-        self.preview = PreviewWorker(
-            self.cfg['ffmpeg_path'],
-            self.preview_url,
-            self.camera.get('username', ''),
-            self.camera.get('password', ''),
-            int(self.cfg['web_live_width']),
-            int(self.cfg['web_live_fps']),
-            self._frame,
-            self.preview_quality,
-        )
-        self.preview.start()
+        if self.server:
+            self.preview, self.preview_key = self.server.acquire_preview(
+                self.preview_url,
+                self.camera.get('username', ''),
+                self.camera.get('password', ''),
+                self.preview_quality,
+                self._frame,
+            )
+        else:
+            self.preview_key = None
+            self.preview = PreviewWorker(
+                self.cfg['ffmpeg_path'],
+                self.preview_url,
+                self.camera.get('username', ''),
+                self.camera.get('password', ''),
+                int(self.cfg['web_live_width']),
+                int(self.cfg['web_live_fps']),
+                self._frame,
+                self.preview_quality,
+            )
+            self.preview.start()
 
     def set_preview_quality(self, quality):
         quality = str(quality or 'high').lower()
@@ -257,7 +288,12 @@ class StreamState:
         if quality == self.preview_quality and self.preview:
             return
         if self.preview:
-            self.preview.stop()
+            if self.server and self.preview_key:
+                self.server.release_preview(self.preview_key, self._frame)
+            else:
+                self.preview.stop()
+        self.preview = None
+        self.preview_key = None
         self._start(quality)
     def _frame(self, frame):
         with self.lock:
@@ -478,10 +514,14 @@ class StreamState:
         if self.motion:
             self.motion.stop()
         if self.preview:
-            self.preview.stop()
+            if self.server and self.preview_key:
+                self.server.release_preview(self.preview_key, self._frame)
+            else:
+                self.preview.stop()
         if self.recorder:
             self.recorder.stop()
         self.preview = None
+        self.preview_key = None
 
 
 class LocalCamServer:
@@ -502,6 +542,7 @@ class LocalCamServer:
         self.ptz = PTZController(self.log)
         self.webrtc = WebRTCManager(self.log)
         self.streams = {}
+        self.preview_workers = {}
         self.rebuild_streams()
 
     def log(self, message):
@@ -509,6 +550,50 @@ class LocalCamServer:
 
     def cfg(self):
         return load_config()
+
+    def _preview_key(self, url, username, password, quality):
+        cfg = self.cfg()
+        return (
+            str(url or '').strip(),
+            str(username or ''),
+            str(password or ''),
+            str(quality or 'high').lower(),
+            int(cfg.get('web_live_width', 1280)),
+            int(cfg.get('web_live_fps', 8)),
+        )
+
+    def acquire_preview(self, url, username, password, quality, callback):
+        key = self._preview_key(url, username, password, quality)
+        with self.lock:
+            worker = self.preview_workers.get(key)
+            if worker is None:
+                cfg = self.cfg()
+                worker = PreviewWorker(
+                    cfg['ffmpeg_path'],
+                    url,
+                    username,
+                    password,
+                    int(cfg['web_live_width']),
+                    int(cfg['web_live_fps']),
+                    callback,
+                    quality,
+                )
+                self.preview_workers[key] = worker
+                worker.start()
+            else:
+                worker.add_listener(callback)
+            return worker, key
+
+    def release_preview(self, key, callback):
+        with self.lock:
+            worker = self.preview_workers.get(key)
+            if worker is None:
+                return
+            empty = worker.remove_listener(callback)
+            if empty:
+                self.preview_workers.pop(key, None)
+        if empty:
+            worker.stop()
 
     def rebuild_streams(self):
         cfg = self.cfg()
@@ -553,7 +638,7 @@ class LocalCamServer:
             self.streams.clear()
             for c in cameras:
                 if c.get('url') and 'CAMERA_IP' not in str(c.get('url')):
-                    self.streams[c['id']] = StreamState(c, cfg, self.store, self.log)
+                    self.streams[c['id']] = StreamState(c, cfg, self.store, self.log, self)
 
     def start(self):
         from core.web import LocalCamHandler
