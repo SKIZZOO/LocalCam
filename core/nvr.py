@@ -660,6 +660,18 @@ class LocalCamServer:
         cfg['web_live_fps'] = max(1, min(15, int(cfg.get('web_live_fps', 8))))
         cfg['web_live_width'] = max(320, min(2560, int(cfg.get('web_live_width', 1280))))
         cfg['web_session_hours'] = max(1, min(168, int(cfg.get('web_session_hours', 12))))
+
+        motion = cfg.get('motion') if isinstance(cfg.get('motion'), dict) else {}
+        cfg['motion'] = {
+            **motion,
+            'enabled': bool(motion.get('enabled', True)),
+            'interval_seconds': max(0.25, min(5.0, float(motion.get('interval_seconds', 0.5)))),
+            'threshold': max(0.1, min(50.0, float(motion.get('threshold', 6.0)))),
+            'min_changed_fraction': max(0.001, min(0.5, float(motion.get('min_changed_fraction', 0.008)))),
+            'cooldown_seconds': max(0.0, min(300.0, float(motion.get('cooldown_seconds', 15.0)))),
+            'save_event_snapshots': bool(motion.get('save_event_snapshots', True)),
+        }
+
         def normalize_storage_path(value, fallback):
             raw = os.path.expandvars(os.path.expanduser(str(value or fallback).strip()))
             path = Path(raw)
