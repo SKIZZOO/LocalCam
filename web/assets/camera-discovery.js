@@ -183,27 +183,38 @@
       username: block.querySelector('[data-k="username"]')?.value.trim() || '',
       password: block.querySelector('[data-k="password"]')?.value || ''
     };
-    await Promise.all(streams.map(async (feed) => {
-      const url = String(feed.suggested_url || feed.url || '');
-      const card = [...box.querySelectorAll('.detected-feed')].find((node) => node.dataset.feedUrl === url);
-      const slot = card?.querySelector('[data-preview-slot]');
-      try {
-        const data = await api('/api/camera-snapshot', {
-          timeoutMs: 15000,
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({...credentials, url})
-        });
-        if (!data.ok || !data.data) throw new Error(data.error || 'Preview unavailable.');
-        if (slot) slot.innerHTML = `<img src="data:${data.mime || 'image/jpeg'};base64,${data.data}" alt="${esc(feedLabel(url))} snapshot">`;
-      } catch (error) {
-        if (slot) slot.innerHTML = `<div class="discovery-preview-empty">${esc(error.message || 'Preview unavailable')}</div>`;
-      } finally {
-        completed += 1;
-        if (progress) { progress.textContent = `${completed}/${total} PREVIEWS`; progress.className = `pill ${completed === total ? 'good' : ''}`; }
-        status.textContent = `Found ${total} working feed${total === 1 ? '' : 's'}. Capturing snapshots (${completed}/${total})…`;
+
+    // Camera firmware often allows only one or two RTSP sessions at a time.
+    // Limit snapshot requests instead of opening one FFmpeg process per feed.
+    let next = 0;
+    const captureOne = async () => {
+      while (next < streams.length) {
+        const feed = streams[next++];
+        const url = String(feed.suggested_url || feed.url || '');
+        const card = [...box.querySelectorAll('.detected-feed')].find((node) => node.dataset.feedUrl === url);
+        const slot = card?.querySelector('[data-preview-slot]');
+        try {
+          const data = await api('/api/camera-snapshot', {
+            timeoutMs: 10000,
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({...credentials, url})
+          });
+          if (!data.ok || !data.data) throw new Error(data.error || 'Preview unavailable.');
+          if (slot) slot.innerHTML = `<img src="data:${data.mime || 'image/jpeg'};base64,${data.data}" alt="${esc(feedLabel(url))} snapshot">`;
+        } catch (error) {
+          if (slot) slot.innerHTML = `<div class="discovery-preview-empty">${esc(error.message || 'Preview unavailable')}</div>`;
+        } finally {
+          completed += 1;
+          if (progress) {
+            progress.textContent = `${completed}/${total} PREVIEWS`;
+            progress.className = `pill ${completed === total ? 'good' : ''}`;
+          }
+          status.textContent = `Found ${total} working feed${total === 1 ? '' : 's'}. Capturing snapshots (${completed}/${total})…`;
+        }
       }
-    }));
+    };
+    await Promise.all([captureOne(), captureOne()]);
     status.textContent = `Found ${total} working feed${total === 1 ? '' : 's'}. Review the previews and select the feeds you want to use.`;
   }
   function applyDetectedSelection(block, feeds) {
@@ -363,19 +374,13 @@
     results.appendChild(row);
   }
 
-  // Handle both the explicit Auto-detect button and the existing Test RTSP
-  // button. Capture phase runs before app.js's normal Test RTSP handler, so
-  // testing a root URL automatically invokes the path assistant instead of
-  // returning the known-invalid result for rtsp://HOST:554/.
+  // Auto-detection is explicit. Keep the normal Test RTSP action in
+  // app.js as a fast single-URL health check.
   cameraEditor.addEventListener('click', async (event) => {
-    const autoButton = event.target.closest('[data-auto-rtsp]');
-    const testButton = event.target.closest('[data-test-camera]');
-    const button = autoButton || testButton;
+    const button = event.target.closest('[data-auto-rtsp]');
     if (!button) return;
-    if (testButton) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
+    event.preventDefault();
+    event.stopPropagation();
     await autoDetect(button);
   }, true);
 
