@@ -185,16 +185,22 @@ def test_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
         ('udp', None, 'UDP (FFmpeg default)'),
     )
     errors: list[str] = []
+    deadline = __import__('time').monotonic() + max(1, int(timeout_seconds))
 
-    # Camera firmware often handles only one RTSP session reliably. Probe one
-    # transport/client combination at a time instead of opening eight FFmpeg
-    # sessions concurrently across the candidate set.
+    # Keep the whole URL test bounded by timeout_seconds. Previously each of
+    # the four transport/client attempts got the full timeout, turning a
+    # nominal 2-second probe into an 8-second wait (and making the UI appear
+    # stuck when a camera did not answer).
     for transport, user_agent, label in attempts:
+        remaining = deadline - __import__('time').monotonic()
+        if remaining <= 0:
+            errors.append('RTSP probe timed out before all compatibility attempts completed')
+            break
         ok, error = _run_probe(
             ffmpeg_path,
             target,
             transport,
-            timeout_seconds,
+            max(1, int(remaining)),
             user_agent,
         )
         if ok:
