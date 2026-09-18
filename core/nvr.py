@@ -46,30 +46,11 @@ def human_bytes(value: int | float) -> str:
 
 
 def quality_rtsp_url(url: str, quality: str) -> str:
-    """Keep the camera's selected RTSP feed; only downshift a known main stream."""
-    quality = str(quality or 'high').lower()
-    if quality not in ('low', 'medium', 'high', 'ultra'):
-        quality = 'high'
-    source = str(url or '').strip()
-
-    # Some cameras label the main/sub streams with _0/_1, but not every
-    # firmware uses _0 as the visually best feed. Never force a user's
-    # explicitly selected _1 feed over to _0 for high/ultra quality.
-    match = re.search(r'(/live/ch\d+_)(\d+)(\.sdp)?$', source, re.IGNORECASE)
-    if match and quality == 'low' and match.group(2) == '0':
-        return source[:match.start(2)] + '1' + (match.group(3) or '')
-
-    # V380-style stream=0.sdp / stream=1.sdp follows the same conservative
-    # rule: only switch a known main stream down to its substream.
-    stream_match = re.search(r'([?&]stream=)(\d+)(\.sdp)?$', source, re.IGNORECASE)
-    if stream_match and quality == 'low' and stream_match.group(2) == '0':
-        return source[:stream_match.start(2)] + '1' + (stream_match.group(3) or '')
-
-    query_match = re.search(r'([?&]substream=)(\d+)', source, re.IGNORECASE)
-    if query_match and quality == 'low' and query_match.group(2) == '0':
-        return source[:query_match.start(2)] + '1' + source[query_match.end(2):]
-
-    return source
+    """Keep the explicitly selected camera feed at every browser quality level."""
+    # Live quality changes control the browser-side output resolution/FPS and
+    # JPEG quality. They must not silently replace a selected main feed with a
+    # lower-quality camera substream.
+    return str(url or '').strip()
 def lan_ip() -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
