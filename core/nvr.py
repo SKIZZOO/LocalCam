@@ -219,6 +219,7 @@ class StreamState:
         self.server = server
         self.preview_key = None
         self.lock = threading.Condition()
+        self._frame_callback = self._frame
         self.frame = None
         self.seq = 0
         self.last_frame = 0.0
@@ -265,7 +266,7 @@ class StreamState:
                 self.camera.get('username', ''),
                 self.camera.get('password', ''),
                 self.preview_quality,
-                self._frame,
+                self._frame_callback,
             )
         else:
             self.preview_key = None
@@ -289,7 +290,7 @@ class StreamState:
             return
         if self.preview:
             if self.server and self.preview_key:
-                self.server.release_preview(self.preview_key, self._frame)
+                self.server.release_preview(self.preview_key, self._frame_callback)
             else:
                 self.preview.stop()
         self.preview = None
