@@ -73,6 +73,8 @@ FFmpeg: <https://ffmpeg.org/download.html>
 
 The normal user workflow is now a single launcher: **`run.bat`**.
 
+To update to the latest GitHub `main` version, stop LocalCam and double-click **`update.bat`**. It uses Git when available, falls back to downloading the latest GitHub ZIP when Git is unavailable, preserves `config.json`, `.venv`, recordings, snapshots, and the local database, then starts the updated `run.bat` automatically.
+
 ## Confirmed RTSP pattern
 
 The CAM720 hardware used during development exposes paths such as:
