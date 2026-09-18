@@ -1363,8 +1363,35 @@ async function testMotion() {
   }
 }
 
+async function refreshDiagnostics() {
+  const output = $('diagnosticsOutput');
+  const button = $('diagnosticsRefresh');
+  if (!output) return;
+  if (button) { button.disabled = true; button.textContent = 'Checking…'; }
+  output.textContent = 'Collecting runtime diagnostics…';
+  try {
+    const data = await api('/api/diagnostics', { timeoutMs: 5000 });
+    const lines = [
+      `Active HTTP/Python threads: ${data.threads ?? '—'}`,
+      `Configured stream objects: ${data.streams ?? '—'}`,
+      `Shared preview workers: ${data.preview_workers?.length ?? 0}`,
+      ...((data.preview_workers || []).map((worker, index) =>
+        `Worker ${index + 1}: ${worker.source} · listeners ${worker.listeners} · alive ${worker.alive} · frames ${worker.frames} · restarts ${worker.restarts} · failures ${worker.consecutive_failures}${worker.last_error ? ` · error: ${worker.last_error}` : ''}`
+      )),
+      `Log file: ${data.log_file || 'localcam.log'}`
+    ];
+    output.textContent = lines.join('\n');
+  } catch (error) {
+    output.textContent = error.message || 'Diagnostics request failed.';
+    reportClientIssue('diagnostics', 'Diagnostics request failed', error.message || String(error));
+  } finally {
+    if (button) { button.disabled = false; button.textContent = 'Check diagnostics'; }
+  }
+}
+
 function setupSettingsActions() {
   $('motionTest')?.addEventListener('click', () => testMotion());
+  $('diagnosticsRefresh')?.addEventListener('click', () => refreshDiagnostics());
   $('mEnabled')?.addEventListener('change', () => renderMotionCameraPicker(state.settings?.cameras || []));
   $('saveSettings').addEventListener('click', async () => {
     const button = $('saveSettings');
