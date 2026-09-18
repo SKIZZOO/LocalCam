@@ -224,49 +224,6 @@
       : `Selected ${feedLabel(selectedUrl)}.`, 'success');
   }
 
-  function addDetectedFeeds(block, feeds) {
-    if (typeof state === 'undefined' || !state.settings) {
-      showToast('Camera settings are still loading. Try again in a moment.', 'error');
-      return;
-    }
-    const current = collectCameras();
-    const sourceId = block.querySelector('[data-k="id"]')?.value.trim() || '';
-    const source = current.find((camera) => camera.id === sourceId) || current[0];
-    if (!source) return;
-
-    const existingUrls = new Set(current.map((camera) => camera.url));
-    const existingIds = new Set(current.map((camera) => camera.id));
-    let added = 0;
-
-    feeds.forEach((feed) => {
-      const url = String(feed.suggested_url || '').trim();
-      if (!url || existingUrls.has(url)) return;
-      const label = feedLabel(url).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `feed-${added + 1}`;
-      const baseId = `${source.id}-${label}`;
-      let id = baseId;
-      let n = 2;
-      while (existingIds.has(id)) id = `${baseId}-${n++}`;
-      const copy = {
-        ...source,
-        id,
-        name: `${source.name} · ${feedLabel(url)}`,
-        url,
-        ptz: { ...(source.ptz || {}) }
-      };
-      current.push(copy);
-      existingUrls.add(url);
-      existingIds.add(id);
-      added += 1;
-    });
-
-    state.settings.cameras = current;
-    renderCameraEditor(state.settings.cameras);
-    ensureAutoButtons();
-    status.textContent = added
-      ? `Added ${added} additional feed${added === 1 ? '' : 's'}. Click Save settings to activate them.`
-      : 'Those feeds are already in the camera list.';
-    showToast(added ? `Added ${added} additional camera feed${added === 1 ? '' : 's'}.` : 'Feeds are already configured.', added ? 'success' : 'info');
-  }
 
   async function autoDetect(button) {
     const block = cameraBlock(button);
@@ -297,13 +254,10 @@
         throw new Error(data.error || 'No usable RTSP stream was found.');
       }
       const streams = data.streams?.length ? data.streams : [data];
-      const primary = streams[0];
-      urlField.value = primary.suggested_url || primary.url || url;
-      urlField.focus();
-      renderDetectedFeeds(block, streams, primary);
+      renderDetectedFeeds(block, streams);
       status.textContent = streams.length > 1
-        ? `Found ${streams.length} working feeds. The first one is selected above.`
-        : `RTSP stream found via ${data.method || 'camera probing'} using ${String(data.transport || '').toUpperCase()}.`;
+        ? `Found ${streams.length} working feeds. Choose the one you want from the previews below.`
+        : `RTSP stream found via ${data.method || 'camera probing'} using ${String(data.transport || '').toUpperCase()}. Review the snapshot below, then choose Use selected feed.`;
       showToast(`Found ${streams.length} working camera feed${streams.length === 1 ? '' : 's'}.`, 'success');
     } catch (error) {
       status.textContent = error?.message || 'RTSP auto-detection failed.';
