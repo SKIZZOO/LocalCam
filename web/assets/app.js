@@ -625,7 +625,7 @@ function renderDashboard() {
         </div>
         <span class="pill ${cls}">${badge}</span>
       </div>
-      <div class="cam-body"><img draggable="false" decoding="async" fetchpriority="high" src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}&sync=${encodeURIComponent(state.liveSyncAt.toFixed(3))}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay" data-live-transport>MJPEG · ${quality}</div></div>
+      <div class="cam-body"><img draggable="false" decoding="async" fetchpriority="high" src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}&sync=${encodeURIComponent(state.liveSyncAt.toFixed(3))}" alt="${esc(stream.name)}"><audio class="live-audio" muted playsinline preload="none" data-audio-src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay" data-live-transport>MJPEG · ${quality}</div></div>
       <div class="cam-foot"><span>${stream.online ? 'Connected' : 'Waiting for stream'}</span><div class="cam-actions"><button class="small-btn" data-action="snapshot" data-id="${esc(stream.id)}">Snapshot</button>${recordButton}</div></div>
       ${ptz}
     </article>`;
