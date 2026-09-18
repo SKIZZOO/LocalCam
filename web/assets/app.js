@@ -1232,21 +1232,22 @@ async function saveSettings() {
     cameras: state.cameraEditorDirty ? collectCameras() : (state.settings.cameras || [])
   };
   const result = await api('/api/settings', { timeoutMs: 5000, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  // Config persistence is complete before the POST returns. Camera/preview
-  // processes are rebuilt in the background so the HTTP request stays fast.
+  // The server only acknowledges the queue. Keep the edited values in the UI;
+  // persistence and any FFmpeg rebuild happen on the background worker.
   state.settings = { ...state.settings, ...payload, cameras: payload.cameras };
   state.cameraEditorDirty = false;
-  $('settingsStatus').textContent = 'Settings saved. Runtime changes are applying now; no restart is required.';
+  $('settingsStatus').textContent = result.queued
+    ? 'Settings queued. LocalCam is saving them in the background.'
+    : 'Settings saved.';
   renderCameraEditor(state.settings.cameras || []);
-  showToast('Settings saved. Applying runtime changes now.', 'success');
+  renderMotionCameraPicker(state.settings.cameras || []);
+  showToast(result.queued ? 'Settings queued for saving.' : 'Settings saved.', 'success');
 
   const refreshRuntime = async (attempt = 0) => {
     try {
       await Promise.all([loadInfo(), loadStreams()]);
-      // A stream rebuild can take a moment while FFmpeg exits/starts. Keep
-      // refreshing briefly so a newly added camera appears without a restart.
-      if (attempt < 8 && state.settings?.cameras?.length && !state.streams?.length) {
-        setTimeout(() => refreshRuntime(attempt + 1), 250);
+      if (attempt < 12 && state.settings?.cameras?.length && !state.streams?.length) {
+        setTimeout(() => refreshRuntime(attempt + 1), 300);
       }
     } catch (error) {
       reportClientIssue('refresh', 'Post-save dashboard refresh failed', error?.message || String(error));
