@@ -10,14 +10,14 @@ from typing import Any
 class EventStore:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.lock = threading.RLock()
+        self.lock = threading.RLock()  # serialize writes only; WAL allows concurrent reads
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
 
     def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, timeout=1.5)
+        conn = sqlite3.connect(self.path, timeout=10.0)
         conn.row_factory = sqlite3.Row
-        conn.execute('PRAGMA busy_timeout=1500')
+        conn.execute('PRAGMA busy_timeout=10000')
         return conn
 
     def _init(self) -> None:
@@ -73,13 +73,16 @@ class EventStore:
 
     def list_day(self, day: str, camera_id: str = '') -> list[dict[str, Any]]:
         start = f'{day}T00:00:00'; end = f'{day}T23:59:59'
-        with self.lock:
-            conn = self._conn()
+        conn = self._conn()
+        try:
             if camera_id:
                 cur = conn.execute('SELECT * FROM events WHERE started_at BETWEEN ? AND ? AND camera_id=? ORDER BY started_at DESC', (start, end, camera_id))
             else:
                 cur = conn.execute('SELECT * FROM events WHERE started_at BETWEEN ? AND ? ORDER BY started_at DESC', (start, end))
-            rows = [dict(row) for row in cur.fetchall()]; conn.close(); return rows
+            rows = [dict(row) for row in cur.fetchall()]
+            return rows
+        finally:
+            conn.close()
 
     def ensure_legacy_admin(self, password_hash: str) -> None:
         if not password_hash: return
@@ -91,8 +94,11 @@ class EventStore:
             conn.close()
 
     def user_count(self) -> int:
-        with self.lock:
-            conn = self._conn(); n = int(conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]); conn.close(); return n
+        conn = self._conn()
+        try:
+            return int(conn.execute('SELECT COUNT(*) FROM users').fetchone()[0])
+        finally:
+            conn.close()
 
     def create_user(self, username: str, password_hash: str, role: str = 'viewer') -> int:
         role = role if role in ('admin', 'operator', 'viewer') else 'viewer'; username = username.strip()
@@ -107,12 +113,20 @@ class EventStore:
             finally: conn.close()
 
     def get_user_by_username(self, username: str) -> dict[str, Any] | None:
-        with self.lock:
-            conn = self._conn(); row = conn.execute('SELECT * FROM users WHERE username=?', (username.strip(),)).fetchone(); conn.close(); return dict(row) if row else None
+        conn = self._conn()
+        try:
+            row = conn.execute('SELECT * FROM users WHERE username=?', (username.strip(),)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
 
     def get_user(self, user_id: int) -> dict[str, Any] | None:
-        with self.lock:
-            conn = self._conn(); row = conn.execute('SELECT * FROM users WHERE id=?', (int(user_id),)).fetchone(); conn.close(); return dict(row) if row else None
+        conn = self._conn()
+        try:
+            row = conn.execute('SELECT * FROM users WHERE id=?', (int(user_id),)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
 
     def list_users(self) -> list[dict[str, Any]]:
         with self.lock:
