@@ -1276,3 +1276,8 @@ class LocalCamServer:
                 (self.base_dir / 'config.json').write_bytes(z.read('config.json'))
             if 'localcam.sqlite3' in names:
                 (self.base_dir / 'localcam.sqlite3').write_bytes(z.read('localcam.sqlite3'))
+        # Refresh the in-memory config after restore so HTTP requests immediately
+        # see the restored settings without another disk read.
+        restored = load_config()
+        with self.config_cache_lock:
+            self.config_cache = json.loads(json.dumps(restored))
