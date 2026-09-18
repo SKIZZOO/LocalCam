@@ -51,6 +51,15 @@ def quality_rtsp_url(url: str, quality: str) -> str:
     # JPEG quality. They must not silently replace a selected main feed with a
     # lower-quality camera substream.
     return str(url or '').strip()
+def motion_selected_for_camera(camera_id: str, motion_config: dict[str, Any], selected_ids: list[Any] | set[Any] | tuple[Any, ...]) -> bool:
+    """Return whether motion detection should run for one camera."""
+    if not bool(motion_config.get('enabled')):
+        return False
+    selected = {str(value).strip() for value in selected_ids if str(value).strip()}
+    # An empty selection keeps legacy behavior: all cameras are monitored.
+    return not selected or str(camera_id) in selected
+
+
 def lan_ip() -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -207,10 +216,7 @@ class StreamState:
         selected_motion_cameras = self.cfg.get('motion_cameras', [])
         if not isinstance(selected_motion_cameras, list):
             selected_motion_cameras = []
-        selected_motion_cameras = {str(value) for value in selected_motion_cameras if str(value).strip()}
-        motion_for_camera = bool(m.get('enabled')) and (
-            not selected_motion_cameras or self.id in selected_motion_cameras
-        )
+        motion_for_camera = motion_selected_for_camera(self.id, m, selected_motion_cameras)
         if motion_for_camera:
             self.motion = MotionDetector(
                 self.get_frame,
