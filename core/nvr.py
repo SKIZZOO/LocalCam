@@ -547,6 +547,7 @@ class LocalCamServer:
     def __init__(self, base_dir: Path = BASE_DIR):
         self.base_dir = Path(base_dir)
         self.lock = threading.RLock()
+        self.config_lock = threading.RLock()
         self.log_lock = threading.RLock()
         self.log_path = self.base_dir / 'localcam.log'
         self.httpd = None
@@ -935,7 +936,17 @@ class LocalCamServer:
         return cfg
 
     def save_settings(self, payload):
-        cfg = self.cfg()
+        started = time.monotonic()
+        with self.config_lock:
+            cfg = self.cfg()
+            previous_runtime = {
+                'ffmpeg_path': cfg.get('ffmpeg_path'),
+                'web_live_fps': cfg.get('web_live_fps'),
+                'web_live_width': cfg.get('web_live_width'),
+                'live_quality': cfg.get('live_quality'),
+            }
+            previous_cameras = json.loads(json.dumps(cfg.get('cameras', [])))
+        self.log(f'Settings request received; config snapshot took {(time.monotonic() - started):.3f}s')
         keys = (
             'ffmpeg_path', 'record_root', 'snapshot_root', 'record_mode', 'segment_minutes',
             'min_free_gb', 'max_retention_days', 'web_bind', 'web_port', 'web_live_fps',
@@ -986,7 +997,7 @@ class LocalCamServer:
         )
         cfg['record_mode'] = cfg.get('record_mode') if cfg.get('record_mode') in ('continuous', 'motion', 'manual') else 'continuous'
 
-        old = cfg.get('cameras', [])
+        old = previous_cameras
         cameras = []
         used_ids = set()
         for i, item in enumerate(payload.get('cameras', old)):
@@ -1034,14 +1045,7 @@ class LocalCamServer:
             if camera_id in camera_ids
         ]
 
-        previous_cameras = old
         camera_changed = cameras != previous_cameras
-        previous_runtime = {
-            'ffmpeg_path': cfg.get('ffmpeg_path'),
-            'web_live_fps': cfg.get('web_live_fps'),
-            'web_live_width': cfg.get('web_live_width'),
-            'live_quality': cfg.get('live_quality'),
-        }
         runtime_changed = (
             camera_changed
             or previous_runtime['ffmpeg_path'] != cfg.get('ffmpeg_path')
@@ -1050,9 +1054,10 @@ class LocalCamServer:
             or previous_runtime['live_quality'] != cfg.get('live_quality')
         )
 
-        started = time.monotonic()
-        save_config(cfg)
-        self.log(f'Settings saved in {(time.monotonic() - started):.3f}s; camera_changed={camera_changed}, runtime_changed={runtime_changed}')
+        with self.config_lock:
+            write_started = time.monotonic()
+            save_config(cfg)
+        self.log(f'Settings config write completed in {(time.monotonic() - write_started):.3f}s; total={time.monotonic() - started:.3f}s; camera_changed={camera_changed}, runtime_changed={runtime_changed}')
 
         if runtime_changed:
             # Never make the HTTP settings request wait for FFmpeg teardown or
