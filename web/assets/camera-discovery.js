@@ -61,6 +61,17 @@
     return match ? Number(match[1]) : null;
   }
 
+  function isMainFeed(url) {
+    const source = String(url || '');
+    const channel = source.match(/ch\d+_(\d+)/i);
+    if (channel) return channel[1] === '0';
+    const stream = source.match(/[?&]stream=(\d+)/i);
+    if (stream) return stream[1] === '0';
+    const substream = source.match(/[?&]substream=(\d+)/i);
+    if (substream) return substream[1] === '0';
+    return true;
+  }
+
   function feedLabel(url) {
     const match = String(url || '').match(/ch(\d+)_(\d+)/i);
     if (!match) return 'Discovered feed';
@@ -77,8 +88,8 @@
     if (aChannel != null && bChannel != null && aChannel !== bChannel) return aChannel - bChannel;
     if (aChannel != null && bChannel == null) return -1;
     if (aChannel == null && bChannel != null) return 1;
-    const aMain = /ch\d+_0/i.test(aKey) ? 0 : 1;
-    const bMain = /ch\d+_0/i.test(bKey) ? 0 : 1;
+    const aMain = isMainFeed(aKey) ? 0 : 1;
+    const bMain = isMainFeed(bKey) ? 0 : 1;
     if (aMain !== bMain) return aMain - bMain;
     return aKey.localeCompare(bKey);
   }
@@ -89,19 +100,31 @@
     if (!streams?.length) return;
 
     const ordered = [...streams].sort(feedSort);
-    const firstUrl = String(ordered[0]?.suggested_url || ordered[0]?.url || '');
+    const mainCount = ordered.filter((feed) => isMainFeed(feed.suggested_url || feed.url)).length;
     const box = document.createElement('div');
     box.className = 'detected-feeds';
     box.innerHTML = `
       <div class="detected-feeds-head">
-        <div><strong>Working camera feeds</strong><span>Choose the feed for this camera. Each working feed has its own snapshot preview.</span></div>
+        <div><strong>Working camera feeds</strong><span>Multiple feeds can be selected. Main feeds are selected by default because they normally provide the best picture quality.</span></div>
       </div>
       <div class="detected-feed-picker"></div>
+      <div class="discovery-selection-panel">
+        <strong>Add the feeds you want to use</strong>
+        <p class="hint">LocalCam found ${ordered.length} working feed${ordered.length === 1 ? '' : 's'}. Main feeds are recommended. Sub feeds are lower-quality alternatives and are left unchecked unless you explicitly select them.</p>
+        <div class="detected-selection-summary" aria-live="polite"></div>
+        <div class="detected-selection-warning" aria-live="polite"></div>
+        <div class="row-actions">
+          <button type="button" class="button primary" data-use-detected>Use selected feeds</button>
+          <button type="button" class="button ghost" data-dismiss-detected>Not now</button>
+        </div>
+      </div>
     `;
 
     const picker = box.querySelector('.detected-feed-picker');
     ordered.forEach((feed, index) => {
       const url = String(feed.suggested_url || feed.url || '');
+      const main = isMainFeed(url);
+      const selectedByDefault = mainCount ? main : index === 0;
       const preview = feed.preview
         ? `<img src="data:${feed.preview_mime || 'image/jpeg'};base64,${feed.preview}" alt="${esc(feedLabel(url))} snapshot">`
         : '<div class="discovery-preview-empty">Preview unavailable</div>';
@@ -110,9 +133,9 @@
       card.innerHTML = `
         <div class="discovery-preview">${preview}</div>
         <div class="discovery-feed-info">
-          <label class="detected-primary">
-            <input type="radio" name="detected-primary-feed" value="${esc(url)}" ${index === 0 || url === firstUrl ? 'checked' : ''}>
-            <span><b>Use this feed</b><strong>${esc(feedLabel(url))}</strong></span>
+          <label class="detected-select">
+            <input type="checkbox" data-detected-feed value="${esc(url)}" ${selectedByDefault ? 'checked' : ''}>
+            <span><b>${main ? 'Main feed · recommended' : 'Sub feed · lower quality'}</b><strong>${esc(feedLabel(url))}</strong></span>
           </label>
           <small>${esc(url)}</small>
           <small>${esc(String(feed.method || 'RTSP'))} · ${esc(String(feed.transport || '').toUpperCase())}</small>
@@ -121,63 +144,46 @@
       picker.appendChild(card);
     });
 
-    const primaryChannel = channelKey(firstUrl);
-    const extras = ordered.filter((feed) => {
-      const url = String(feed.suggested_url || feed.url || '');
-      if (!url || url === firstUrl) return false;
-      const feedChannel = channelKey(url);
-      // ch00_0/ch00_1 are quality variants of the same camera channel;
-      // only offer a different channel (for example ch01_0/ch01_1) as a
-      // separate camera by default.
-      return primaryChannel == null || feedChannel == null || feedChannel !== primaryChannel;
+    const summary = box.querySelector('.detected-selection-summary');
+    const warning = box.querySelector('.detected-selection-warning');
+    const useButton = box.querySelector('[data-use-detected]');
+    const updateSelectionState = () => {
+      const selected = [...box.querySelectorAll('[data-detected-feed]:checked')];
+      const selectedSub = selected.filter((input) => !isMainFeed(input.value));
+      summary.textContent = `${selected.length} feed${selected.length === 1 ? '' : 's'} selected · ${mainCount ? 'main feeds are preselected' : 'no main feed was detected'}`;
+      warning.textContent = selectedSub.length
+        ? `You selected ${selectedSub.length} sub feed${selectedSub.length === 1 ? '' : 's'}. LocalCam recommends the main feeds for better image quality.`
+        : 'Main feeds are the recommended choice for the best available quality.';
+      useButton.disabled = selected.length === 0;
+    };
+    box.querySelectorAll('[data-detected-feed]').forEach((input) => input.addEventListener('change', updateSelectionState));
+    box.querySelectorAll('.detected-feed').forEach((card) => card.addEventListener('click', (event) => {
+      if (event.target.closest('input,button,a,label')) return;
+      const input = card.querySelector('[data-detected-feed]');
+      if (input) { input.checked = !input.checked; updateSelectionState(); }
+    }));
+    updateSelectionState();
+
+    useButton?.addEventListener('click', () => {
+      const selectedUrls = [...box.querySelectorAll('[data-detected-feed]:checked')].map((input) => input.value);
+      const selected = ordered.filter((feed) => selectedUrls.includes(String(feed.suggested_url || feed.url || '')));
+      if (!selected.length) {
+        status.textContent = 'Select at least one feed.';
+        return;
+      }
+      applyDetectedSelection(block, selected);
+      box.remove();
     });
 
-    const ask = document.createElement('div');
-    ask.className = 'discovery-add-question';
-    const checks = extras.map((feed, i) => {
-      const url = String(feed.suggested_url || feed.url || '');
-      return `
-        <label class="detected-choice">
-          <input type="checkbox" data-add-feed="${i}" checked>
-          <span><b>Add ${esc(feedLabel(url))} as another camera</b><small>${esc(url)}</small></span>
-        </label>`;
-    }).join('');
-
-    ask.innerHTML = `
-      <div>
-        <strong>Which feed should Camera 1 use?</strong>
-        <p class="hint">Pick the live feed you want above. ${extras.length ? 'LocalCam also found other camera channels — choose whether to add them as separate cameras.' : 'A snapshot is shown for every feed so you can choose by what the camera is actually showing.'}</p>
-      </div>
-      ${extras.length ? `<div class="detected-choices">${checks}</div>` : ''}
-      <div class="row-actions">
-        <button type="button" class="button primary" data-use-detected>Use selected feed${extras.length ? ' and add selected' : ''}</button>
-        <button type="button" class="button ghost" data-dismiss-detected>Not now</button>
-      </div>
-    `;
-
-    ask.querySelector('[data-use-detected]')?.addEventListener('click', () => {
-      const selected = ask.closest('.detected-feeds')?.querySelector('input[name="detected-primary-feed"]:checked')?.value || firstUrl;
-      const picked = extras.filter((_, i) => ask.querySelector(`[data-add-feed="${i}"]`)?.checked);
-      const selectedChannel = channelKey(selected);
-      const filteredExtras = picked.filter((feed) => {
-        const url = String(feed.suggested_url || feed.url || '');
-        const feedChannel = channelKey(url);
-        return !selectedChannel || feedChannel == null || feedChannel !== selectedChannel;
-      });
-      applyDetectedSelection(block, selected, filteredExtras);
-      ask.remove();
-    });
-
-    ask.querySelector('[data-dismiss-detected]')?.addEventListener('click', () => {
-      ask.remove();
+    box.querySelector('[data-dismiss-detected]')?.addEventListener('click', () => {
+      box.remove();
       status.textContent = 'Detection kept available in the results. No camera settings were changed.';
     });
 
-    box.appendChild(ask);
     results.prepend(box);
   }
 
-  function applyDetectedSelection(block, selectedUrl, feeds) {
+  function applyDetectedSelection(block, feeds) {
     if (typeof state === 'undefined' || !state.settings) {
       showToast('Camera settings are still loading. Try again in a moment.', 'error');
       return;
@@ -185,16 +191,31 @@
     const current = collectCameras();
     const sourceId = block.querySelector('[data-k="id"]')?.value.trim() || '';
     const source = current.find((camera) => camera.id === sourceId) || current[0];
-    if (!source || !selectedUrl) return;
+    if (!source || !feeds?.length) return;
 
-    source.url = selectedUrl;
-    const existingUrls = new Set(current.map((camera) => camera.url));
-    const existingIds = new Set(current.map((camera) => camera.id));
+    const primary = feeds.find((feed) => isMainFeed(feed.suggested_url || feed.url)) || feeds[0];
+    const primaryUrl = String(primary.suggested_url || primary.url || '').trim();
+    if (!primaryUrl) return;
+
+    // Remove additional cameras created by an earlier discovery selection.
+    // This prevents stale ch01 sub/main feeds from remaining in the live view
+    // after the user changes the selection.
+    const generatedPrefix = `${source.id}-channel-`;
+    const cleaned = current.filter((camera) => {
+      if (camera === source) return true;
+      if (String(camera.discovered_from || '') === source.id) return false;
+      if (String(camera.id || '').startsWith(generatedPrefix)) return false;
+      return !String(camera.name || '').startsWith(`${source.name} · Channel `);
+    });
+    source.url = primaryUrl;
+    const existingUrls = new Set(cleaned.map((camera) => camera.url));
+    const existingIds = new Set(cleaned.map((camera) => camera.id));
     let added = 0;
 
-    feeds.forEach((feed) => {
+    const additions = feeds.filter((feed) => String(feed.suggested_url || feed.url || '').trim() !== primaryUrl);
+    additions.forEach((feed) => {
       const url = String(feed.suggested_url || '').trim();
-      if (!url || url === selectedUrl || existingUrls.has(url)) return;
+      if (!url || existingUrls.has(url)) return;
       const label = feedLabel(url).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `feed-${added + 1}`;
       const baseId = `${source.id}-${label}`;
       let id = baseId;
@@ -205,25 +226,23 @@
         id,
         name: `${source.name} · ${feedLabel(url)}`,
         url,
+        discovered_from: source.id,
+        discovered_feed: true,
         ptz: { ...(source.ptz || {}) }
       };
-      current.push(copy);
+      cleaned.push(copy);
       existingUrls.add(url);
       existingIds.add(id);
       added += 1;
     });
 
-    state.settings.cameras = current;
+    state.settings.cameras = cleaned;
     renderCameraEditor(state.settings.cameras);
     ensureAutoButtons();
-    status.textContent = added
-      ? `Using ${feedLabel(selectedUrl)} and added ${added} additional camera feed${added === 1 ? '' : 's'}. Click Save settings to activate them.`
-      : `Using ${feedLabel(selectedUrl)} for this camera. Click Save settings to activate it.`;
-    showToast(added
-      ? `Selected ${feedLabel(selectedUrl)} and added ${added} additional feed${added === 1 ? '' : 's'}.`
-      : `Selected ${feedLabel(selectedUrl)}.`, 'success');
+    const selectedCount = feeds.length;
+    status.textContent = `Configured ${selectedCount} feed${selectedCount === 1 ? '' : 's'} for this camera${added ? ` and added ${added} separate camera feed${added === 1 ? '' : 's'}` : ''}. Main feeds are preferred. Click Save settings to activate them.`;
+    showToast(`Selected ${selectedCount} feed${selectedCount === 1 ? '' : 's'}. Main feeds are preferred.`, 'success');
   }
-
 
   async function autoDetect(button) {
     const block = cameraBlock(button);
