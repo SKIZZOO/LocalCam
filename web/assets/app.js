@@ -215,8 +215,8 @@ async function loadAuth() {
   state.auth = await api('/api/auth/status');
   const user = state.auth.user;
   $('sideUser').textContent = user ? `${user.username} · ${user.role}` : '—';
-}
   updateLiveLayoutPermission();
+}
 
 function setPage(name) {
   if (name === 'settings' && !can('admin')) return;
