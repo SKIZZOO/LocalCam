@@ -10,13 +10,15 @@ from typing import Any
 class EventStore:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.lock = threading.RLock()
+        self.lock = threading.BoundedSemaphore(8)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
 
     def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, timeout=10)
+        conn = sqlite3.connect(self.path, timeout=1.5)
         conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA busy_timeout=1500')
+        conn.execute('PRAGMA journal_mode=WAL')
         return conn
 
     def _init(self) -> None:
