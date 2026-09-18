@@ -388,11 +388,16 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
         )
         found_streams.extend(channel_results)
 
-        common = [(base + path, 'common path') for path in COMMON_RTSP_PATHS if base + path not in seen]
-        for start in range(0, len(common), 4):
+        # If any of the known channel variants worked, we have the useful
+        # information the user asked for. Do not keep probing every generic
+        # RTSP path or start slow ONVIF/WSDL discovery; that made the UI sit on
+        # "Detecting..." for minutes even though a working stream was already
+        # found.
+        if not channel_results:
+            common = [(base + path, 'common path') for path in COMMON_RTSP_PATHS if base + path not in seen]
             result, checked = _probe_batch(
                 ffmpeg_path,
-                common[start:start + 4],
+                common,
                 username,
                 password,
                 timeout_seconds,
@@ -403,24 +408,25 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
             if result:
                 found_streams.append(result)
 
+    # ONVIF is only a final fallback when RTSP path probing found nothing.
+    if not found_streams:
+        onvif = [(uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password)]
+        for start in range(0, len(onvif), 4):
+            result, checked = _probe_batch(
+                ffmpeg_path,
+                onvif[start:start + 4],
+                username,
+                password,
+                timeout_seconds,
+                seen,
+                failures,
+                checked,
+            )
+            if result:
+                found_streams.append(result)
 
-    # ONVIF is a final fallback because WSDL/SOAP setup can be substantially slower.
-    onvif = [(uri, 'ONVIF') for uri in _onvif_stream_uris(host, username, password)]
-    for start in range(0, len(onvif), 4):
-        result, checked = _probe_batch(
-            ffmpeg_path,
-            onvif[start:start + 4],
-            username,
-            password,
-            timeout_seconds,
-            seen,
-            failures,
-            checked,
-        )
-        if result:
-            found_streams.append(result)
-
-    # De-duplicate successful URLs and attach a small preview image for the UI.
+    # De-duplicate successful URLs and attach previews in parallel so multiple
+    # working feeds do not turn snapshot capture into another long serial wait.
     unique: list[dict[str, Any]] = []
     seen_success: set[str] = set()
     for item in found_streams:
@@ -428,11 +434,33 @@ def discover_and_test_rtsp(ffmpeg_path: str, url: str, username: str, password: 
         if not candidate or candidate in seen_success:
             continue
         seen_success.add(candidate)
-        snap = snapshot_rtsp(ffmpeg_path, candidate, username, password, min(5, max(2, timeout_seconds + 1)))
-        item = dict(item)
-        item['preview'] = snap.get('data', '')
-        item['preview_mime'] = snap.get('mime', '')
-        unique.append(item)
+        unique.append(dict(item))
+
+    if unique:
+        snapshot_timeout = min(5, max(2, timeout_seconds + 1))
+        executor = ThreadPoolExecutor(max_workers=min(4, len(unique)), thread_name_prefix='rtsp-snapshot')
+        futures = {
+            executor.submit(
+                snapshot_rtsp,
+                ffmpeg_path,
+                str(item.get('suggested_url') or item.get('url') or ''),
+                username,
+                password,
+                snapshot_timeout,
+            ): item
+            for item in unique
+        }
+        try:
+            for future in as_completed(futures):
+                item = futures[future]
+                try:
+                    snap = future.result()
+                except Exception as exc:
+                    snap = {'ok': False, 'error': str(exc)}
+                item['preview'] = snap.get('data', '')
+                item['preview_mime'] = snap.get('mime', '')
+        finally:
+            executor.shutdown(wait=True)
 
     if unique:
         primary = dict(unique[0])
