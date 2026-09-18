@@ -422,10 +422,11 @@ async function saveLiveLayout() {
   try {
     const result = await api('/api/camera-layout', {
       method: 'POST',
+      timeoutMs: 5000,
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ cameras: draft })
     });
-    const names = new Map((result.cameras || []).map((camera) => [String(camera.id), String(camera.name)]));
+    const names = new Map((result.cameras || draft).map((camera) => [String(camera.id), String(camera.name)]));
     state.streams = draft.map((item) => {
       const current = state.streams.find((stream) => String(stream.id) === item.id) || {};
       return {...current, id: item.id, name: names.get(item.id) || item.name};
@@ -445,7 +446,10 @@ async function saveLiveLayout() {
     });
     setLiveLayoutEdit(false);
     applyLiveDomOrder();
-    showToast('Live view layout saved.', 'success');
+    showToast(result.queued ? 'Live view layout queued for saving.' : 'Live view layout saved.', 'success');
+    setTimeout(() => loadSettings().catch((error) => {
+      reportClientIssue('refresh', 'Layout confirmation refresh failed', error?.message || String(error));
+    }), 800);
   } catch (error) {
     showToast(error.message || 'Could not save live layout.', 'error');
   } finally {
@@ -1228,8 +1232,10 @@ async function saveSettings() {
     cameras: state.cameraEditorDirty ? collectCameras() : (state.settings.cameras || [])
   };
   const result = await api('/api/settings', { timeoutMs: 5000, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  const savedSettings = result.settings || result;
-  state.settings = savedSettings;
+  // The server acknowledges settings immediately and persists them in a
+  // background worker. Keep the just-edited values visible without waiting
+  // for another config.json read in the POST response.
+  state.settings = { ...state.settings, ...payload, cameras: payload.cameras };
   state.cameraEditorDirty = false;
   $('settingsStatus').textContent = result.queued
     ? 'Settings queued. LocalCam is applying the changes in the background.'
@@ -1239,6 +1245,9 @@ async function saveSettings() {
   Promise.all([loadInfo(), loadStreams()]).catch((error) => {
     reportClientIssue('refresh', 'Post-save dashboard refresh failed', error?.message || String(error));
   });
+  setTimeout(() => loadSettings().catch((error) => {
+    reportClientIssue('refresh', 'Settings confirmation refresh failed', error?.message || String(error));
+  }), 800);
 }
 
 async function loadUsers() {
