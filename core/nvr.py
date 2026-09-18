@@ -1282,5 +1282,5 @@ class LocalCamServer:
         # Refresh the in-memory config after restore so HTTP requests immediately
         # see the restored settings without another disk read.
         restored = load_config()
-        with self.config_cache_lock:
-            self.config_cache = json.loads(json.dumps(restored))
+        self._set_cfg_cache(restored)
+        self.request_rebuild('backup restore')
