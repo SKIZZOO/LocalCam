@@ -97,8 +97,7 @@
   function renderDetectedFeeds(block, streams) {
     const existing = results.querySelector('.detected-feeds');
     existing?.remove();
-    if (!streams?.length) return;
-
+    if (!streams?.length) return null;
     const ordered = [...streams].sort(feedSort);
     const mainCount = ordered.filter((feed) => isMainFeed(feed.suggested_url || feed.url)).length;
     const box = document.createElement('div');
@@ -106,32 +105,29 @@
     box.innerHTML = `
       <div class="detected-feeds-head">
         <div><strong>Working camera feeds</strong><span>Multiple feeds can be selected. Main feeds are selected by default because they normally provide the best picture quality.</span></div>
+        <span class="pill" data-preview-progress>PREVIEWS PENDING</span>
       </div>
       <div class="detected-feed-picker"></div>
       <div class="discovery-selection-panel">
         <strong>Add the feeds you want to use</strong>
-        <p class="hint">LocalCam found ${ordered.length} working feed${ordered.length === 1 ? '' : 's'}. Main feeds are recommended. Sub feeds are lower-quality alternatives and are left unchecked unless you explicitly select them.</p>
+        <p class="hint">LocalCam found ${ordered.length} working feed${ordered.length === 1 ? '' : 's'}. Main feeds are selected by default. Sub feeds are lower-quality alternatives and are left unchecked.</p>
         <div class="detected-selection-summary" aria-live="polite"></div>
         <div class="detected-selection-warning" aria-live="polite"></div>
         <div class="row-actions">
           <button type="button" class="button primary" data-use-detected>Use selected feeds</button>
           <button type="button" class="button ghost" data-dismiss-detected>Not now</button>
         </div>
-      </div>
-    `;
-
+      </div>`;
     const picker = box.querySelector('.detected-feed-picker');
     ordered.forEach((feed, index) => {
       const url = String(feed.suggested_url || feed.url || '');
       const main = isMainFeed(url);
       const selectedByDefault = mainCount ? main : index === 0;
-      const preview = feed.preview
-        ? `<img src="data:${feed.preview_mime || 'image/jpeg'};base64,${feed.preview}" alt="${esc(feedLabel(url))} snapshot">`
-        : '<div class="discovery-preview-empty">Preview unavailable</div>';
       const card = document.createElement('div');
       card.className = 'detected-feed';
+      card.dataset.feedUrl = url;
       card.innerHTML = `
-        <div class="discovery-preview">${preview}</div>
+        <div class="discovery-preview" data-preview-slot><div class="discovery-preview-empty">Capturing snapshot…</div></div>
         <div class="discovery-feed-info">
           <label class="detected-select">
             <input type="checkbox" data-detected-feed value="${esc(url)}" ${selectedByDefault ? 'checked' : ''}>
@@ -139,11 +135,9 @@
           </label>
           <small>${esc(url)}</small>
           <small>${esc(String(feed.method || 'RTSP'))} · ${esc(String(feed.transport || '').toUpperCase())}</small>
-        </div>
-      `;
+        </div>`;
       picker.appendChild(card);
     });
-
     const summary = box.querySelector('.detected-selection-summary');
     const warning = box.querySelector('.detected-selection-warning');
     const useButton = box.querySelector('[data-use-detected]');
@@ -163,26 +157,54 @@
       if (input) { input.checked = !input.checked; updateSelectionState(); }
     }));
     updateSelectionState();
-
     useButton?.addEventListener('click', () => {
       const selectedUrls = [...box.querySelectorAll('[data-detected-feed]:checked')].map((input) => input.value);
       const selected = ordered.filter((feed) => selectedUrls.includes(String(feed.suggested_url || feed.url || '')));
-      if (!selected.length) {
-        status.textContent = 'Select at least one feed.';
-        return;
-      }
+      if (!selected.length) { status.textContent = 'Select at least one feed.'; return; }
       applyDetectedSelection(block, selected);
       box.remove();
     });
-
     box.querySelector('[data-dismiss-detected]')?.addEventListener('click', () => {
       box.remove();
       status.textContent = 'Detection kept available in the results. No camera settings were changed.';
     });
-
     results.prepend(box);
+    return box;
   }
 
+  async function loadFeedPreviews(box, block, streams) {
+    const total = streams.length;
+    if (!total) return;
+    const progress = box.querySelector('[data-preview-progress]');
+    let completed = 0;
+    status.textContent = `Found ${total} working feed${total === 1 ? '' : 's'}. Capturing snapshots (0/${total})…`;
+    const credentials = {
+      camera_id: block.querySelector('[data-k="id"]')?.value.trim() || '',
+      username: block.querySelector('[data-k="username"]')?.value.trim() || '',
+      password: block.querySelector('[data-k="password"]')?.value || ''
+    };
+    await Promise.all(streams.map(async (feed) => {
+      const url = String(feed.suggested_url || feed.url || '');
+      const card = [...box.querySelectorAll('.detected-feed')].find((node) => node.dataset.feedUrl === url);
+      const slot = card?.querySelector('[data-preview-slot]');
+      try {
+        const data = await api('/api/camera-snapshot', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({...credentials, url})
+        });
+        if (!data.ok || !data.data) throw new Error(data.error || 'Preview unavailable.');
+        if (slot) slot.innerHTML = `<img src="data:${data.mime || 'image/jpeg'};base64,${data.data}" alt="${esc(feedLabel(url))} snapshot">`;
+      } catch (error) {
+        if (slot) slot.innerHTML = `<div class="discovery-preview-empty">${esc(error.message || 'Preview unavailable')}</div>`;
+      } finally {
+        completed += 1;
+        if (progress) { progress.textContent = `${completed}/${total} PREVIEWS`; progress.className = `pill ${completed === total ? 'good' : ''}`; }
+        status.textContent = `Found ${total} working feed${total === 1 ? '' : 's'}. Capturing snapshots (${completed}/${total})…`;
+      }
+    }));
+    status.textContent = `Found ${total} working feed${total === 1 ? '' : 's'}. Review the previews and select the feeds you want to use.`;
+  }
   function applyDetectedSelection(block, feeds) {
     if (typeof state === 'undefined' || !state.settings) {
       showToast('Camera settings are still loading. Try again in a moment.', 'error');
@@ -261,8 +283,8 @@
 
     button.disabled = true;
     const oldText = button.textContent;
-    button.textContent = 'Detecting…';
-    status.textContent = 'Testing RTSP, checking ch00/ch01 feeds, and capturing previews…';
+    button.textContent = 'Checking feeds…';
+    status.textContent = 'Checking the configured URL and all ch00/ch01 main + sub feeds in parallel…';
     try {
       const data = await api('/api/camera-assist', {
         method: 'POST',
@@ -273,11 +295,10 @@
         throw new Error(data.error || 'No usable RTSP stream was found.');
       }
       const streams = data.streams?.length ? data.streams : [data];
-      renderDetectedFeeds(block, streams);
-      status.textContent = streams.length > 1
-        ? `Found ${streams.length} working feeds. Choose the one you want from the previews below.`
-        : `RTSP stream found via ${data.method || 'camera probing'} using ${String(data.transport || '').toUpperCase()}. Review the snapshot below, then choose Use selected feed.`;
+      const box = renderDetectedFeeds(block, streams);
+      status.textContent = `Found ${streams.length} working feed${streams.length === 1 ? '' : 's'} after checking ${data.candidates_checked || streams.length} RTSP paths. Loading snapshots…`;
       showToast(`Found ${streams.length} working camera feed${streams.length === 1 ? '' : 's'}.`, 'success');
+      if (box) await loadFeedPreviews(box, block, streams);
     } catch (error) {
       status.textContent = error?.message || 'RTSP auto-detection failed.';
       showToast(error?.message || 'RTSP auto-detection failed.', 'error');
