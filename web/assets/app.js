@@ -1165,9 +1165,12 @@ function setupCameraSettings() {
   $('cameraEditor').addEventListener('change', markCameraEditorDirty);
 
   $('cameraEditor').addEventListener('click', async (event) => {
-    const remove = event.target.closest('[data-remove-camera]');
-    const test = event.target.closest('[data-test-camera]');
-    const ptzTest = event.target.closest('[data-test-ptz]');
+    const target = event.target instanceof Element ? event.target : null;
+    const remove = target?.closest('[data-remove-camera]');
+    const test = target?.closest('[data-test-camera]');
+    const ptzTest = target?.closest('[data-test-ptz]');
+    if (!remove && !test && !ptzTest) return;
+    event.preventDefault();
     try {
       if (remove) {
         markCameraEditorDirty();
@@ -1175,56 +1178,68 @@ function setupCameraSettings() {
         state.settings.cameras = state.settings.cameras.filter((camera) => String(camera.id) !== removeId);
         renderCameraEditor(state.settings.cameras);
         renderMotionCameraPicker(state.settings.cameras);
+        return;
       }
-      if (test) await testCamera(test.dataset.testCamera);
+      if (test) await testCamera(test);
       if (ptzTest) await testPTZ(ptzTest.dataset.testPtz);
     } catch (error) {
-      showToast(error.message, 'error');
+      showToast(error.message || 'Camera test failed.', 'error');
     }
   });
 }
 
-async function testCamera(id) {
-  const block = document.querySelector(`.camera-block[data-camera-id="${CSS.escape(String(id))}"]`)
-    || [...document.querySelectorAll('.camera-block')].find((item) => String(item.querySelector('[data-k="id"]')?.value || '').trim() === String(id));
+async function testCamera(button) {
+  const block = button?.closest('.camera-block');
   const urlField = block?.querySelector('[data-k="url"]');
   const usernameField = block?.querySelector('[data-k="username"]');
   const passwordField = block?.querySelector('[data-k="password"]');
+  const idField = block?.querySelector('[data-k="id"]');
+  const id = String(button?.dataset.testCamera || idField?.value || '').trim();
   const url = String(urlField?.value || '').trim();
   const username = String(usernameField?.value || '').trim();
   const password = String(passwordField?.value || '');
 
   if (!url) {
     showToast('Enter an RTSP address first.', 'error');
+    urlField?.focus();
     return;
   }
 
-  // Test the values currently in the editor rather than the last-saved
-  // server state. This makes Test RTSP useful before Save and lets a root
-  // rtsp://host:554/ address automatically find the actual stream path.
-  const result = await api('/api/camera-assist', {
-    timeoutMs: 20000,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ camera_id: String(id), url, username, password })
-  });
+  button.disabled = true;
+  const previousText = button.textContent;
+  button.textContent = 'Testing…';
+  showToast('Testing RTSP connection…', 'info');
 
-  if (!result.ok) {
-    showToast(`RTSP test failed: ${result.error || 'No usable RTSP stream was found.'}`, 'error');
-    return;
-  }
+  try {
+    // Test exactly what is currently in this camera editor row. This avoids
+    // stale saved state and keeps the button independent of camera ordering.
+    const result = await api('/api/camera-assist', {
+      timeoutMs: 20000,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ camera_id: id, url, username, password })
+    });
 
-  const suggested = String(result.suggested_url || result.streams?.[0]?.suggested_url || '').trim();
-  if (suggested && urlField && suggested !== url) {
-    urlField.value = suggested;
-    markCameraEditorDirty();
+    if (!result.ok) {
+      showToast(`RTSP test failed: ${result.error || 'No usable RTSP stream was found.'}`, 'error');
+      return;
+    }
+
+    const suggested = String(result.suggested_url || result.streams?.[0]?.suggested_url || '').trim();
+    if (suggested && urlField && suggested !== url) {
+      urlField.value = suggested;
+      markCameraEditorDirty();
+    }
+    showToast(
+      suggested && suggested !== url
+        ? 'RTSP test passed. The stream path was filled in automatically.'
+        : 'RTSP test passed.',
+      'success'
+    );
+  } finally {
+    button.disabled = false;
+    button.textContent = previousText || 'Test RTSP';
   }
-  showToast(
-    suggested && suggested !== url
-      ? `RTSP test passed. Stream path found: ${suggested}`
-      : 'RTSP test passed.',
-    'success'
-  );
 }
 
 async function testPTZ(id) {
