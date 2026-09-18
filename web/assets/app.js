@@ -1,4 +1,4 @@
-const state = { info: null, settings: null, streams: [], auth: null, liveQuality: localStorage.getItem('localcam.liveQuality') || 'high', cameraEditorDirty: false, liveSyncAt: 0 };
+const state = { info: null, settings: null, streams: [], auth: null, liveQuality: localStorage.getItem('localcam.liveQuality') || 'high', cameraEditorDirty: false, liveSyncAt: 0, liveLayoutEdit: false, liveLayoutOriginal: null, liveLayoutDirty: false, liveLayoutSaving: false };
 const webrtcPeers = new Map();
 let webrtcGeneration = 0;
 
@@ -302,6 +302,218 @@ function fillCameraSelects() {
   $('eventsCamera').innerHTML = options;
 }
 
+function applyLiveDomOrder() {
+  const grid = $('cameraGrid');
+  if (!grid) return;
+  const byId = new Map([...grid.children].map((card) => [String(card.dataset.cameraId || ''), card]));
+  state.streams.forEach((stream) => {
+    const card = byId.get(String(stream.id));
+    if (card) grid.appendChild(card);
+  });
+}
+
+function setLiveLayoutEdit(enabled) {
+  const grid = $('cameraGrid');
+  const arrange = $('liveArrange');
+  const save = $('liveSaveLayout');
+  const cancel = $('liveCancelLayout');
+  if (!grid || !arrange || !save || !cancel) return;
+
+  state.liveLayoutEdit = !!enabled;
+  grid.classList.toggle('live-layout-editing', state.liveLayoutEdit);
+  [...grid.querySelectorAll('.cam')].forEach((card) => {
+    card.draggable = state.liveLayoutEdit;
+  });
+  arrange.hidden = state.liveLayoutEdit;
+  save.hidden = !state.liveLayoutEdit;
+  cancel.hidden = !state.liveLayoutEdit;
+
+  if (state.liveLayoutEdit) {
+    state.liveLayoutOriginal = state.streams.map((stream) => ({ id: String(stream.id), name: String(stream.name) }));
+    state.liveLayoutDirty = false;
+    const first = grid.querySelector('.cam-title-edit');
+    first?.focus();
+    first?.select();
+  }
+}
+
+function markLiveLayoutDirty() {
+  state.liveLayoutDirty = true;
+}
+
+function getLiveLayoutDraft() {
+  const grid = $('cameraGrid');
+  return [...grid.querySelectorAll('.cam')].map((card) => ({
+    id: String(card.dataset.cameraId || ''),
+    name: String(card.querySelector('[data-layout-name]')?.value || '').trim()
+  })).filter((item) => item.id);
+}
+
+async function saveLiveLayout() {
+  if (state.liveLayoutSaving) return;
+  const draft = getLiveLayoutDraft();
+  if (!draft.length) return;
+
+  const invalid = draft.find((item) => !item.name);
+  if (invalid) {
+    showToast('Every live camera needs a name.', 'error');
+    return;
+  }
+
+  state.liveLayoutSaving = true;
+  const button = $('liveSaveLayout');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Saving…';
+  }
+  try {
+    const result = await api('/api/camera-layout', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ cameras: draft })
+    });
+    const names = new Map((result.cameras || []).map((camera) => [String(camera.id), String(camera.name)]));
+    state.streams = draft.map((item) => {
+      const current = state.streams.find((stream) => String(stream.id) === item.id) || {};
+      return {...current, id: item.id, name: names.get(item.id) || item.name};
+    });
+    state.streams.forEach((stream) => {
+      stream.name = names.get(String(stream.id)) || stream.name;
+    });
+    state.liveLayoutDirty = false;
+    const grid = $('cameraGrid');
+    [...grid.querySelectorAll('.cam')].forEach((card) => {
+      const stream = state.streams.find((item) => String(item.id) === String(card.dataset.cameraId));
+      if (!stream) return;
+      const view = card.querySelector('.cam-title-view');
+      const input = card.querySelector('[data-layout-name]');
+      if (view) view.textContent = stream.name;
+      if (input) input.value = stream.name;
+    });
+    setLiveLayoutEdit(false);
+    applyLiveDomOrder();
+    showToast('Live view layout saved.', 'success');
+  } catch (error) {
+    showToast(error.message || 'Could not save live layout.', 'error');
+  } finally {
+    state.liveLayoutSaving = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Save layout';
+    }
+  }
+}
+
+function cancelLiveLayout() {
+  const original = state.liveLayoutOriginal;
+  if (original?.length) {
+    const names = new Map(original.map((item) => [item.id, item.name]));
+    const byId = new Map(state.streams.map((stream) => [String(stream.id), stream]));
+    state.streams = original.map((item) => ({...(byId.get(item.id) || {}), id: item.id, name: item.name}));
+    const grid = $('cameraGrid');
+    [...grid.querySelectorAll('.cam')].forEach((card) => {
+      const stream = names.get(String(card.dataset.cameraId));
+      if (stream) {
+        const view = card.querySelector('.cam-title-view');
+        const input = card.querySelector('[data-layout-name]');
+        if (view) view.textContent = stream;
+        if (input) input.value = stream;
+      }
+    });
+    applyLiveDomOrder();
+  }
+  state.liveLayoutDirty = false;
+  setLiveLayoutEdit(false);
+}
+
+function setupLiveLayoutActions() {
+  const arrange = $('liveArrange');
+  const save = $('liveSaveLayout');
+  const cancel = $('liveCancelLayout');
+  const grid = $('cameraGrid');
+  if (!arrange || !save || !cancel || !grid) return;
+
+  arrange.hidden = !can('control');
+  save.hidden = true;
+  cancel.hidden = true;
+
+  arrange.addEventListener('click', () => setLiveLayoutEdit(true));
+  save.addEventListener('click', () => saveLiveLayout());
+  cancel.addEventListener('click', () => cancelLiveLayout());
+
+  grid.addEventListener('input', (event) => {
+    if (!state.liveLayoutEdit || !event.target.closest('[data-layout-name]')) return;
+    state.liveLayoutDirty = true;
+  });
+
+  grid.addEventListener('dragstart', (event) => {
+    if (!state.liveLayoutEdit) return;
+    const card = event.target.closest('.cam');
+    if (!card || !event.target.closest('[data-layout-drag]')) {
+      event.preventDefault();
+      return;
+    }
+    grid.dataset.dragCameraId = String(card.dataset.cameraId || '');
+    card.classList.add('live-layout-dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(card.dataset.cameraId || ''));
+  });
+
+  grid.addEventListener('dragover', (event) => {
+    if (!state.liveLayoutEdit) return;
+    const target = event.target.closest('.cam');
+    const dragId = grid.dataset.dragCameraId;
+    if (!target || !dragId || String(target.dataset.cameraId) === dragId) return;
+    event.preventDefault();
+    [...grid.querySelectorAll('.cam')].forEach((card) => card.classList.remove('live-layout-drop-target'));
+    target.classList.add('live-layout-drop-target');
+  });
+
+  grid.addEventListener('drop', (event) => {
+    if (!state.liveLayoutEdit) return;
+    const target = event.target.closest('.cam');
+    const dragId = grid.dataset.dragCameraId;
+    if (!target || !dragId || String(target.dataset.cameraId) === dragId) return;
+    event.preventDefault();
+    const cards = [...grid.querySelectorAll('.cam')];
+    const dragged = cards.find((card) => String(card.dataset.cameraId) === dragId);
+    if (!dragged) return;
+    const targetIndex = cards.indexOf(target);
+    const dragIndex = cards.indexOf(dragged);
+    if (dragIndex < targetIndex) target.after(dragged);
+    else target.before(dragged);
+    state.streams = [...grid.querySelectorAll('.cam')].map((card) =>
+      state.streams.find((stream) => String(stream.id) === String(card.dataset.cameraId))
+    ).filter(Boolean);
+    state.liveLayoutDirty = true;
+    [...grid.querySelectorAll('.cam')].forEach((card) => card.classList.remove('live-layout-drop-target'));
+  });
+
+  grid.addEventListener('dragend', (event) => {
+    const card = event.target.closest('.cam');
+    card?.classList.remove('live-layout-dragging');
+    grid.dataset.dragCameraId = '';
+    [...grid.querySelectorAll('.cam')].forEach((node) => node.classList.remove('live-layout-drop-target'));
+  });
+
+  grid.addEventListener('click', (event) => {
+    if (!state.liveLayoutEdit) return;
+    const move = event.target.closest('[data-layout-move]');
+    if (!move) return;
+    const card = event.target.closest('.cam');
+    if (!card) return;
+    const direction = move.dataset.layoutMove;
+    const sibling = direction === 'up' ? card.previousElementSibling : card.nextElementSibling;
+    if (!sibling) return;
+    if (direction === 'up') sibling.before(card);
+    else sibling.after(card);
+    state.streams = [...grid.querySelectorAll('.cam')].map((node) =>
+      state.streams.find((stream) => String(stream.id) === String(node.dataset.cameraId))
+    ).filter(Boolean);
+    state.liveLayoutDirty = true;
+  });
+}
+ 
 function selectedLiveQuality() { return state.liveQuality || 'high'; }
 
 function renderDashboard() {
@@ -340,8 +552,18 @@ function renderDashboard() {
         <button data-action="ptz" data-id="${esc(stream.id)}" data-pan="1" data-tilt="-1">↘</button>
       </div>` : '';
 
-    return `<article class="cam">
-      <div class="cam-head"><div class="cam-title">${esc(stream.name)}</div><span class="pill ${cls}">${badge}</span></div>
+    return `<article class="cam" data-camera-id="${esc(stream.id)}" draggable="false">
+      <div class="cam-head">
+        <div class="cam-title-wrap">
+          <div class="cam-title"><span class="cam-title-view">${esc(stream.name)}</span><input class="cam-title-edit" data-layout-name value="${esc(stream.name)}" aria-label="Camera name"></div>
+          <div class="cam-edit-tools">
+            <button type="button" class="icon-btn cam-drag-handle" data-layout-drag title="Drag to rearrange">↕</button>
+            <button type="button" class="icon-btn" data-layout-move="up" title="Move up">↑</button>
+            <button type="button" class="icon-btn" data-layout-move="down" title="Move down">↓</button>
+          </div>
+        </div>
+        <span class="pill ${cls}">${badge}</span>
+      </div>
       <div class="cam-body"><img decoding="async" fetchpriority="high" src="/live/${encodeURIComponent(stream.id)}.mjpg?quality=${encodeURIComponent(quality)}&sync=${encodeURIComponent(state.liveSyncAt.toFixed(3))}" alt="${esc(stream.name)}"><audio class="live-audio" autoplay muted playsinline preload="none" src="/live/${encodeURIComponent(stream.id)}.audio.ogg"></audio><div class="cam-overlay" data-live-transport>MJPEG · ${quality}</div></div>
       <div class="cam-foot"><span>${stream.online ? 'Connected' : 'Waiting for stream'}</span><div class="cam-actions"><button class="small-btn" data-action="snapshot" data-id="${esc(stream.id)}">Snapshot</button>${recordButton}</div></div>
       ${ptz}
@@ -363,6 +585,7 @@ function setupLiveQuality() {
 }
 
 function setupDashboardActions() {
+  setupLiveLayoutActions();
   $('cameraGrid').addEventListener('click', async (event) => {
     const button = event.target.closest('[data-action]');
     if (!button) return;
