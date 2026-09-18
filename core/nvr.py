@@ -566,7 +566,9 @@ class LocalCamServer:
         self.webrtc = WebRTCManager(self.log)
         self.streams = {}
         self.preview_workers = {}
-        self.rebuild_streams()
+        # Do not start FFmpeg/RTSP workers during object construction. A bad
+        # camera must never prevent the HTTP server from coming up.
+        self.startup_rebuild_pending = True
 
     def log(self, message):
         line = f'[{datetime.now():%Y-%m-%d %H:%M:%S}] {message}'
@@ -751,7 +753,9 @@ class LocalCamServer:
                     self.rebuild_pending = False
 
     def start(self):
+        self.log('Starting LocalCam web server…')
         from core.web import LocalCamHandler
+        self.log('Web handler loaded; binding HTTP server…')
         cfg = self.cfg()
         bind = str(cfg.get('web_bind', '0.0.0.0'))
         port = max(1024, min(65535, int(cfg.get('web_port', 8765))))
@@ -766,6 +770,9 @@ class LocalCamServer:
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True, name='localcam-http')
         self.thread.start()
         self.log(f'Web server listening on {self.url()}')
+        if self.startup_rebuild_pending:
+            self.startup_rebuild_pending = False
+            self.request_rebuild('startup')
         threading.Thread(target=self._controller, daemon=True, name='recording-controller').start()
         threading.Thread(target=self._maintenance, daemon=True, name='maintenance').start()
 
