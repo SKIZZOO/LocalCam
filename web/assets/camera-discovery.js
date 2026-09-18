@@ -189,6 +189,7 @@
       const slot = card?.querySelector('[data-preview-slot]');
       try {
         const data = await api('/api/camera-snapshot', {
+          timeoutMs: 15000,
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({...credentials, url})
@@ -287,6 +288,7 @@
     status.textContent = 'Checking the configured URL and all ch00/ch01 main + sub feeds in parallel…';
     try {
       const data = await api('/api/camera-assist', {
+        timeoutMs: 120000,
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ camera_id: id, url, username, password })
