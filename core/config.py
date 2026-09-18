@@ -39,8 +39,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     'motion': {
         'enabled': True,
         'interval_seconds': 0.5,
-        'threshold': 8.0,
-        'min_changed_fraction': 0.012,
+        'threshold': 6.0,
+        'min_changed_fraction': 0.008,
         'cooldown_seconds': 15.0,
         'save_event_snapshots': True,
     },
