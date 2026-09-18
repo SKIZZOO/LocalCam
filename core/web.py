@@ -61,29 +61,31 @@ def _camera_discovery_worker(server_app, job_id: str, subnet_text: str) -> None:
                 return None
 
         found = []
-        # Keep concurrency modest. A 48-worker full /24 scan can cause some
-        # inexpensive camera RTSP stacks to temporarily stop answering after a
-        # couple of scans.
-        with ThreadPoolExecutor(max_workers=20) as pool:
-            futures = {pool.submit(probe, target): target for target in targets}
-            for future in as_completed(futures):
-                result = future.result()
-                scanned = None
-                with server_app.camera_discovery_lock:
-                    job = server_app.camera_discovery_job
-                    if not job or job.get('id') != job_id:
-                        return
-                    job['scanned'] += 1
-                    scanned = job['scanned']
-                    if result:
-                        found.append(result)
-                        job['found'] = len(found)
-                        job['results'] = sorted(
-                            found,
-                            key=lambda row: (ipaddress.ip_address(row['host']), row['port'])
-                        )
-                    if scanned == total or scanned % 25 == 0:
-                        job['phase'] = f'Scanning RTSP ports… {scanned}/{total} checks complete · {len(found)} candidate{"s" if len(found) != 1 else ""} found'
+        # Scan in small batches instead of submitting hundreds of sockets at
+        # once. The worker is deliberately gentle so it cannot starve the HTTP
+        # server or flood a camera/router with connection attempts.
+        batch_size = 32
+        for offset in range(0, total, batch_size):
+            batch = targets[offset:offset + batch_size]
+            with ThreadPoolExecutor(max_workers=min(8, len(batch))) as pool:
+                futures = {pool.submit(probe, target): target for target in batch}
+                for future in as_completed(futures):
+                    result = future.result()
+                    with server_app.camera_discovery_lock:
+                        job = server_app.camera_discovery_job
+                        if not job or job.get('id') != job_id:
+                            return
+                        job['scanned'] += 1
+                        scanned = job['scanned']
+                        if result:
+                            found.append(result)
+                            job['found'] = len(found)
+                            job['results'] = sorted(
+                                found,
+                                key=lambda row: (ipaddress.ip_address(row['host']), row['port'])
+                            )
+                        if scanned == total or scanned % 16 == 0:
+                            job['phase'] = f'Scanning RTSP ports… {scanned}/{total} checks complete · {len(found)} candidate{"s" if len(found) != 1 else ""} found'
 
         found.sort(key=lambda row: (ipaddress.ip_address(row['host']), row['port']))
         result = {
@@ -579,18 +581,26 @@ class LocalCamHandler(BaseHTTPRequestHandler):
                             'started_at': now,
                         }
 
+                    total_checks = (network.num_addresses - 2 if network.num_addresses > 2 else 0) * 3
+
+                    # Hand the scan off after the HTTP response can be written.
+                    # This avoids Windows socket/thread startup competing with
+                    # the request that creates the asynchronous job.
+                    def launch_discovery():
+                        time.sleep(0.05)
+                        _camera_discovery_worker(self.server_app, job_id, subnet_text)
+
                     threading.Thread(
-                        target=_camera_discovery_worker,
-                        args=(self.server_app, job_id, subnet_text),
+                        target=launch_discovery,
                         daemon=True,
-                        name='camera-discovery',
+                        name='camera-discovery-launcher',
                     ).start()
                     return self._json({
                         'status': 'running',
                         'job_id': job_id,
                         'phase': 'Preparing the RTSP port scan…',
                         'scanned': 0,
-                        'total': self.server_app.camera_discovery_job.get('total', 0),
+                        'total': total_checks,
                         'found': 0,
                     }, status=202)
                 except ValueError:
