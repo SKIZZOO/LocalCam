@@ -380,13 +380,40 @@
   new MutationObserver(ensureAutoButtons).observe(cameraEditor, { childList: true, subtree: true });
   ensureAutoButtons();
 
+  async function waitForDiscovery(jobId) {
+    let lastScanned = 0;
+    while (true) {
+      const data = await api(`/api/camera-discovery/status?job=${encodeURIComponent(jobId)}`);
+      const scanned = Number(data.scanned || 0);
+      const total = Number(data.total || 0);
+      const found = Number(data.found || 0);
+      if (data.status === 'error') throw new Error(data.error || 'Network scan failed.');
+
+      if (data.status === 'completed') {
+        return data.result || {
+          results: data.results || [],
+          scanned_addresses: data.scanned_addresses,
+          ports: data.ports
+        };
+      }
+
+      // Update even when progress advances slowly so the UI always tells the
+      // user that the scan is still alive.
+      if (scanned !== lastScanned || data.phase) {
+        status.textContent = data.phase || `Scanning… ${scanned}/${total} checks · ${found} candidate${found === 1 ? '' : 's'} found`;
+        lastScanned = scanned;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+  }
+
   scanButton.addEventListener('click', async () => {
     const subnet = subnetInput.value.trim();
     if (!subnet) {
       status.textContent = 'Enter a private IPv4 subnet, for example 192.168.1.0/24.';
       return;
     }
-    status.textContent = 'Scanning the LAN…';
+    status.textContent = 'Starting a gentle RTSP scan…';
     results.replaceChildren();
     scanButton.disabled = true;
     try {
@@ -395,17 +422,35 @@
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({subnet})
       });
-      status.textContent = `Checked ${data.scanned_addresses} addresses on ports ${data.ports.join(', ')}.`;
-      if (!data.results.length) {
-        results.innerHTML = '<div class="muted">No open RTSP ports found. Check the subnet, camera power, firewall, or VLAN settings.</div>';
+
+      if (data.status === 'completed') {
+        status.textContent = data.phase || `Scan complete · ${data.results.length} RTSP candidate${data.results.length === 1 ? '' : 's'} found`;
+        if (!data.results.length) {
+          results.innerHTML = '<div class="muted">No open RTSP ports found. The scan completed without hammering the camera or router. Check the subnet, camera power, firewall, or VLAN settings.</div>';
+          return;
+        }
+        data.results.forEach(addResult);
+        ensureAutoButtons();
         return;
       }
-      data.results.forEach(addResult);
+
+      status.textContent = data.phase || 'Scanning RTSP ports…';
+      const result = await waitForDiscovery(data.job_id);
+      const rows = result.results || [];
+      status.textContent = rows.length
+        ? `Scan complete · checked ${result.scanned_addresses || 'the LAN'} addresses on ports ${(result.ports || [554, 8554, 10554]).join(', ')} · ${rows.length} RTSP candidate${rows.length === 1 ? '' : 's'} found`
+        : `Scan complete · checked ${result.scanned_addresses || 'the LAN'} addresses · no RTSP ports found`;
+      if (!rows.length) {
+        results.innerHTML = '<div class="muted">No open RTSP ports found this time. Try again after a few seconds; LocalCam now throttles the scan to avoid triggering camera/network connection limits.</div>';
+        return;
+      }
+      rows.forEach(addResult);
       ensureAutoButtons();
     } catch (error) {
       status.textContent = error?.message || 'Scan failed.';
+      showToast(error?.message || 'Scan failed.', 'error');
     } finally {
       scanButton.disabled = false;
     }
-  });
+
 })();
