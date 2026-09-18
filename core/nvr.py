@@ -1020,14 +1020,19 @@ class LocalCamServer:
         self.log(f'Settings saved in {(time.monotonic() - started):.3f}s; camera_changed={camera_changed}, runtime_changed={runtime_changed}')
 
         if runtime_changed:
+            # Never make the HTTP settings request wait for FFmpeg teardown or
+            # startup. Camera/preview rebuilds happen in the background.
             self.request_rebuild('camera/preview runtime settings changed')
         else:
             with self.lock:
-                for stream in self.streams.values():
-                    stream.cfg = cfg
-                    stream.refresh_motion()
+                active_streams = list(self.streams.values())
+            for stream in active_streams:
+                stream.cfg = cfg
+                stream.refresh_motion()
 
-        return self.safe_settings()
+        result = self.safe_settings()
+        self.log(f'Settings request completed in {(time.monotonic() - started):.3f}s')
+        return result
 
     def save_camera_layout(self, payload):
         """Persist dashboard camera order/names without touching stream credentials."""
