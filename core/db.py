@@ -18,7 +18,6 @@ class EventStore:
         conn = sqlite3.connect(self.path, timeout=1.5)
         conn.row_factory = sqlite3.Row
         conn.execute('PRAGMA busy_timeout=1500')
-        conn.execute('PRAGMA journal_mode=WAL')
         return conn
 
     def _init(self) -> None:
