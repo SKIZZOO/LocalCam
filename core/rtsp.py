@@ -147,12 +147,10 @@ def _run_probe(ffmpeg_path: str, target: str, transport: str, timeout_seconds: i
         # FFmpeg's RTSP demuxer uses -timeout for socket I/O timeouts.
         # Some Windows FFmpeg builds do not expose the generic -rw_timeout
         # option, so using it makes a valid RTSP URL fail before probing.
-        '-timeout',
-        str(timeout_seconds * 1_000_000),
         '-probesize',
-        '5000000',
+        '1000000',
         '-analyzeduration',
-        '2000000',
+        '1000000',
     ]
     if user_agent:
         cmd.extend(['-user_agent', user_agent])
@@ -326,8 +324,7 @@ def snapshot_rtsp(ffmpeg_path: str, url: str, username: str, password: str,
             ffmpeg_path, '-hide_banner', '-loglevel', 'error',
             '-rtsp_transport', transport,
             '-user_agent', RTSP_USER_AGENT,
-            '-timeout', str(timeout_seconds * 1_000_000),
-            '-probesize', '3000000',
+            '-probesize', '1000000',
             '-analyzeduration', '1000000',
             '-i', target,
             '-map', '0:v:0',
