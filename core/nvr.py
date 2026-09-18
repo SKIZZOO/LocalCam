@@ -758,6 +758,7 @@ class LocalCamServer:
 
         old = cfg.get('cameras', [])
         cameras = []
+        used_ids = set()
         for i, item in enumerate(payload.get('cameras', old)):
             if not isinstance(item, dict) or not str(item.get('url', '')).strip():
                 continue
@@ -768,8 +769,19 @@ class LocalCamServer:
             prevptz = prev.get('ptz') or {}
             ppass = ptz.get('password', '')
             ppass = prevptz.get('password', '') if ppass == '********' else str(ppass)
+
+            camera_id = str(item.get('id') or f'camera-{i + 1}').strip() or f'camera-{i + 1}'
+            if camera_id in used_ids:
+                base = re.sub(r'[^a-z0-9]+', '-', str(item.get('name') or f'camera-{i + 1}').lower()).strip('-') or f'camera-{i + 1}'
+                camera_id = base
+                suffix = 2
+                while camera_id in used_ids:
+                    camera_id = f'{base}-{suffix}'
+                    suffix += 1
+            used_ids.add(camera_id)
+
             cameras.append({
-                'id': str(item.get('id') or f'camera-{i + 1}'),
+                'id': camera_id,
                 'name': str(item.get('name') or f'Camera {i + 1}'),
                 'url': str(item['url']).strip(),
                 'username': str(item.get('username', 'admin')),
